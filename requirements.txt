@@ -1,0 +1,5 @@
+numpy==2.4.2
+pandas==3.0.2
+biopython==1.86
+torch==2.8.0
+streamlit==1.56.0
