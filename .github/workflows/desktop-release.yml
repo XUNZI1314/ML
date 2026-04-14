@@ -1,0 +1,72 @@
+name: desktop-release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-desktop-release:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Create venv
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python -m pip install --upgrade pip
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python -m pip install -r requirements.txt
+
+      - name: Build desktop and portable release
+        shell: cmd
+        run: |
+          call build_portable_release.bat
+
+      - name: Upload desktop exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ML_Local_App_exe
+          path: dist/ML_Local_App.exe
+
+      - name: Upload portable bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ML_Portable_directory
+          path: portable_dist/ML_Portable/
+
+      - name: Upload portable zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ML_Portable_release_zip
+          path: |
+            portable_dist/ML_Portable_release.zip
+            portable_dist/ML_Portable_release.manifest.json
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/ML_Local_App.exe
+            portable_dist/ML_Portable_release.zip
+            portable_dist/ML_Portable_release.manifest.json
+          generate_release_notes: true
+          draft: false
+          prerelease: false

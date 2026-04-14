@@ -252,6 +252,8 @@
 - 新增品牌资产生成脚本 [generate_brand_assets.py](generate_brand_assets.py)
 - 已生成 `assets/app_icon.png` 与 `assets/app_icon.ico`
 - 当前 Streamlit 页面 favicon、桌面启动器窗口和桌面 exe 已统一接入应用图标
+- 新增 GitHub Actions 工作流 [desktop-release.yml](.github/workflows/desktop-release.yml)
+- 现在可通过手动触发或推送 `v*` tag 自动构建桌面版和便携发布包
 - 新增 [export_structure_annotations.py](export_structure_annotations.py)
 - 支持对单个复合物导出 residue/interface 的 viewer-friendly JSON/CSV
 - 输出 `analysis_bundle.json` 作为后续展示层的基础数据契约
@@ -628,6 +630,33 @@ portable_dist\ML_Portable_release.manifest.json
 - 再自动重建 `portable_dist\ML_Portable\`
 - 最后把整个便携目录压缩成单个 zip
 - 解压后，仍然是“目录便携版”的运行方式；也就是保持解压后的目录结构不变，再双击 `ML_Local_App.exe`
+
+### 4.16 GitHub 自动发布
+
+仓库当前已经补了 GitHub Actions 发布工作流：
+
+```text
+.github/workflows/desktop-release.yml
+```
+
+它支持两种方式：
+- 在 GitHub Actions 页面手动 `Run workflow`
+- 推送形如 `v0.1.0` 的 tag
+
+工作流会自动：
+- 在 `windows-latest` 上创建 `.venv`
+- 安装 `requirements.txt`
+- 构建 `dist/ML_Local_App.exe`
+- 构建 `portable_dist/ML_Portable/`
+- 构建 `portable_dist/ML_Portable_release.zip`
+- 上传这些产物到 Actions artifacts
+
+如果是 `v*` tag 触发：
+- 还会自动创建 GitHub Release
+- 并附上：
+  - `ML_Local_App.exe`
+  - `ML_Portable_release.zip`
+  - `ML_Portable_release.manifest.json`
 
 ---
 
