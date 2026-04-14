@@ -1710,6 +1710,48 @@ def _metric_text(value: Any) -> str:
         return text or "N/A"
 
 
+def _load_feature_qc_payload(
+    summary: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    feature_qc_path = None
+    if isinstance(summary, dict):
+        artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+        if artifacts.get("feature_qc_json"):
+            feature_qc_path = Path(str(artifacts.get("feature_qc_json")))
+
+    if feature_qc_path is None:
+        feature_qc_path = _resolve_output_file(
+            "feature_qc.json",
+            summary=summary,
+            metadata=metadata,
+        )
+
+    if feature_qc_path is None or not feature_qc_path.exists():
+        return None
+    return _load_json(feature_qc_path)
+
+
+def _load_feature_df_for_qc(
+    summary: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
+) -> pd.DataFrame | None:
+    feature_csv = summary.get("feature_csv") if isinstance(summary, dict) else None
+    if feature_csv:
+        feature_path = Path(str(feature_csv))
+        if feature_path.exists():
+            return _load_csv(feature_path)
+
+    fallback_path = _resolve_output_file(
+        "pose_features.csv",
+        summary=summary,
+        metadata=metadata,
+    )
+    if fallback_path is not None and fallback_path.exists():
+        return _load_csv(fallback_path)
+    return None
+
+
 def _df_to_html_table(df: pd.DataFrame | None, *, max_rows: int = 20) -> str:
     if df is None or df.empty:
         return '<p class="muted">暂无可展示内容。</p>'
@@ -1763,6 +1805,8 @@ def _create_html_summary_export(
     training_payload = _load_json(training_summary_path) if training_summary_path is not None and training_summary_path.exists() else None
     report_text = _read_text(report_path) if report_path is not None and report_path.exists() else ""
     inventory_df = _build_output_inventory(summary, metadata)
+    feature_qc_payload = _load_feature_qc_payload(summary, metadata)
+    feature_df = _load_feature_df_for_qc(summary, metadata)
 
     comparison = summary.get("comparison") if isinstance(summary.get("comparison"), dict) else {}
     baseline = comparison.get("baseline_rule_vs_ml") if isinstance(comparison.get("baseline_rule_vs_ml"), dict) else {}
@@ -1805,6 +1849,37 @@ def _create_html_summary_export(
     diag_suggestions = diagnostics.get("suggestions") if isinstance(diagnostics.get("suggestions"), list) else []
     diag_messages_html = "".join(f"<li>{html.escape(str(item))}</li>" for item in diag_messages)
     diag_suggestions_html = "".join(f"<li>{html.escape(str(item))}</li>" for item in diag_suggestions)
+
+    processing_summary = feature_qc_payload.get("processing_summary") if isinstance(feature_qc_payload, dict) and isinstance(feature_qc_payload.get("processing_summary"), dict) else {}
+    feature_qc = feature_qc_payload.get("feature_qc") if isinstance(feature_qc_payload, dict) and isinstance(feature_qc_payload.get("feature_qc"), dict) else {}
+    feature_qc_cards = _build_metric_cards_html(
+        [
+            ("Total Rows", processing_summary.get("total_rows")),
+            ("OK Rows", processing_summary.get("ok_rows")),
+            ("Failed Rows", processing_summary.get("failed_rows")),
+            ("Rows With Warning", processing_summary.get("rows_with_warning_message")),
+        ]
+    )
+    status_counts = feature_qc.get("status_counts") if isinstance(feature_qc.get("status_counts"), dict) else {}
+    status_counts_html = "".join(
+        f"<li>{html.escape(str(key))}: {html.escape(str(value))}</li>"
+        for key, value in status_counts.items()
+    )
+    all_empty_columns = feature_qc.get("all_empty_columns") if isinstance(feature_qc.get("all_empty_columns"), list) else []
+    near_constant_columns = feature_qc.get("near_constant_columns") if isinstance(feature_qc.get("near_constant_columns"), list) else []
+
+    failed_rows_df = None
+    warning_rows_df = None
+    if isinstance(feature_df, pd.DataFrame) and not feature_df.empty:
+        base_cols = [col for col in ["nanobody_id", "conformer_id", "pose_id", "pdb_path", "split_mode", "status", "error_message", "warning_message"] if col in feature_df.columns]
+        if "status" in feature_df.columns:
+            failed_rows_df = feature_df[feature_df["status"].astype(str).str.lower().eq("failed")]
+            if base_cols:
+                failed_rows_df = failed_rows_df.loc[:, base_cols]
+        if "warning_message" in feature_df.columns:
+            warning_rows_df = feature_df[feature_df["warning_message"].fillna("").astype(str).str.strip().ne("")]
+            if base_cols:
+                warning_rows_df = warning_rows_df.loc[:, base_cols]
 
     html_text = f"""<!doctype html>
 <html lang="zh-CN">
@@ -2003,6 +2078,24 @@ def _create_html_summary_export(
     <section class="section">
       <h2>运行产物清单</h2>
       {_df_to_html_table(inventory_df, max_rows=50)}
+    </section>
+
+    <section class="section">
+      <h2>Feature QC / Warning 摘要</h2>
+      {"<div class='grid'>" + feature_qc_cards + "</div>" if feature_qc_cards else "<p class='muted'>当前没有 feature_qc.json。</p>"}
+      {"<h3>Status Counts</h3><ul>" + status_counts_html + "</ul>" if status_counts_html else ""}
+      {"<p><strong>全空列:</strong> " + html.escape(", ".join([str(col) for col in all_empty_columns[:20]])) + "</p>" if all_empty_columns else ""}
+      {"<p><strong>近常量列:</strong> " + html.escape(", ".join([str(col) for col in near_constant_columns[:20]])) + "</p>" if near_constant_columns else ""}
+    </section>
+
+    <section class="section">
+      <h2>失败行预览</h2>
+      {_df_to_html_table(failed_rows_df, max_rows=20)}
+    </section>
+
+    <section class="section">
+      <h2>Warning 行预览</h2>
+      {_df_to_html_table(warning_rows_df, max_rows=20)}
     </section>
 
     <section class="section">
@@ -2208,6 +2301,94 @@ def _render_training_summary_panel(
 
     with st.expander("查看 training_summary.json"):
         st.json(payload)
+
+
+def _render_feature_qc_panel(
+    summary: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    qc_payload = _load_feature_qc_payload(summary, metadata)
+    feature_df = _load_feature_df_for_qc(summary, metadata)
+
+    if not isinstance(qc_payload, dict) and feature_df is None:
+        st.info("当前没有 feature_qc.json 或 pose_features.csv，无法展示 QC / warning 面板。")
+        return
+
+    processing_summary = qc_payload.get("processing_summary") if isinstance(qc_payload, dict) and isinstance(qc_payload.get("processing_summary"), dict) else {}
+    feature_qc = qc_payload.get("feature_qc") if isinstance(qc_payload, dict) and isinstance(qc_payload.get("feature_qc"), dict) else {}
+
+    st.subheader("处理摘要")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Rows", int(processing_summary.get("total_rows", 0)))
+    c2.metric("OK Rows", int(processing_summary.get("ok_rows", 0)))
+    c3.metric("Failed Rows", int(processing_summary.get("failed_rows", 0)))
+    c4.metric("Rows With Warning", int(processing_summary.get("rows_with_warning_message", 0)))
+
+    split_mode_counts = processing_summary.get("split_mode_counts") if isinstance(processing_summary.get("split_mode_counts"), dict) else {}
+    status_counts = feature_qc.get("status_counts") if isinstance(feature_qc.get("status_counts"), dict) else {}
+    if split_mode_counts:
+        st.caption("split_mode 分布: " + ", ".join([f"{k}={v}" for k, v in split_mode_counts.items()]))
+    if status_counts:
+        st.caption("status 分布: " + ", ".join([f"{k}={v}" for k, v in status_counts.items()]))
+
+    all_empty_columns = feature_qc.get("all_empty_columns") if isinstance(feature_qc.get("all_empty_columns"), list) else []
+    near_constant_columns = feature_qc.get("near_constant_columns") if isinstance(feature_qc.get("near_constant_columns"), list) else []
+    meta_col1, meta_col2 = st.columns(2)
+    if all_empty_columns:
+        meta_col1.warning("全空列: " + ", ".join([str(col) for col in all_empty_columns[:12]]))
+    else:
+        meta_col1.success("当前没有全空列。")
+    if near_constant_columns:
+        meta_col2.warning("近常量列: " + ", ".join([str(col) for col in near_constant_columns[:12]]))
+    else:
+        meta_col2.success("当前没有近常量列。")
+
+    if isinstance(feature_df, pd.DataFrame) and not feature_df.empty:
+        base_cols = [col for col in ["nanobody_id", "conformer_id", "pose_id", "pdb_path", "split_mode", "status", "error_message", "warning_message"] if col in feature_df.columns]
+        failed_rows_df = None
+        warning_rows_df = None
+        if "status" in feature_df.columns:
+            failed_rows_df = feature_df[feature_df["status"].astype(str).str.lower().eq("failed")]
+            if base_cols:
+                failed_rows_df = failed_rows_df.loc[:, base_cols]
+        if "warning_message" in feature_df.columns:
+            warning_rows_df = feature_df[feature_df["warning_message"].fillna("").astype(str).str.strip().ne("")]
+            if base_cols:
+                warning_rows_df = warning_rows_df.loc[:, base_cols]
+
+        st.subheader("失败行")
+        if failed_rows_df is None or failed_rows_df.empty:
+            st.success("当前没有 failed 行。")
+        else:
+            failed_preview_rows = st.number_input(
+                "失败行预览前 N 行",
+                min_value=5,
+                max_value=200,
+                value=20,
+                step=5,
+                key="failed_rows_preview_rows",
+            )
+            st.caption(f"共 {len(failed_rows_df)} 行失败，当前展示前 {min(int(failed_preview_rows), len(failed_rows_df))} 行。")
+            st.dataframe(failed_rows_df.head(int(failed_preview_rows)), use_container_width=True)
+
+        st.subheader("Warning 行")
+        if warning_rows_df is None or warning_rows_df.empty:
+            st.success("当前没有 warning 行。")
+        else:
+            warning_preview_rows = st.number_input(
+                "Warning 行预览前 N 行",
+                min_value=5,
+                max_value=200,
+                value=20,
+                step=5,
+                key="warning_rows_preview_rows",
+            )
+            st.caption(f"共 {len(warning_rows_df)} 行带 warning，当前展示前 {min(int(warning_preview_rows), len(warning_rows_df))} 行。")
+            st.dataframe(warning_rows_df.head(int(warning_preview_rows)), use_container_width=True)
+
+    if isinstance(qc_payload, dict):
+        with st.expander("查看完整 feature_qc.json"):
+            st.json(qc_payload)
 
 
 def _build_history_records() -> list[dict[str, Any]]:
@@ -2951,8 +3132,8 @@ def main() -> None:
             else:
                 st.error(message)
 
-    tab_summary, tab_history, tab_ranking, tab_pose, tab_report, tab_logs, tab_diag = st.tabs(
-        ["摘要", "历史", "排名结果", "Pose 结果", "执行报告", "日志", "诊断"]
+    tab_summary, tab_qc, tab_history, tab_ranking, tab_pose, tab_report, tab_logs, tab_diag = st.tabs(
+        ["摘要", "QC/Warning", "历史", "排名结果", "Pose 结果", "执行报告", "日志", "诊断"]
     )
 
     with tab_summary:
@@ -2968,6 +3149,23 @@ def main() -> None:
             summary if isinstance(summary, dict) else None,
             metadata if isinstance(metadata, dict) else None,
         )
+
+        qc_payload = _load_feature_qc_payload(
+            summary if isinstance(summary, dict) else None,
+            metadata if isinstance(metadata, dict) else None,
+        )
+        processing_summary = qc_payload.get("processing_summary") if isinstance(qc_payload, dict) and isinstance(qc_payload.get("processing_summary"), dict) else {}
+        if processing_summary:
+            failed_rows = int(processing_summary.get("failed_rows", 0))
+            warning_rows = int(processing_summary.get("rows_with_warning_message", 0))
+            if failed_rows > 0 or warning_rows > 0:
+                st.warning(
+                    f"当前 feature 构建摘要: failed_rows={failed_rows}, "
+                    f"rows_with_warning_message={warning_rows}。"
+                    " 详细内容可到“QC/Warning”页查看。"
+                )
+            else:
+                st.success("当前 feature 构建未发现 failed 行或 warning 行。")
 
         st.subheader("运行产物清单")
         inventory_df = _build_output_inventory(
@@ -3085,6 +3283,12 @@ def main() -> None:
         if isinstance(summary, dict):
             with st.expander("查看完整执行摘要 JSON"):
                 st.json(summary)
+
+    with tab_qc:
+        _render_feature_qc_panel(
+            summary if isinstance(summary, dict) else None,
+            metadata if isinstance(metadata, dict) else None,
+        )
 
     with tab_history:
         if not history_records:
