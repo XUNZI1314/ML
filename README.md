@@ -244,6 +244,7 @@
 - 支持保存/载入参数模板，减少重复填写
 - 支持加载最近运行历史并恢复结果与表单参数
 - 支持在页面中选择多次历史运行做并排对比，并导出对比表 CSV
+- 支持把当前多运行对比直接导出成 HTML 汇总页，并在本机打开
 - 支持在页面中输出失败诊断摘要，帮助快速定位输入路径/依赖/阶段性失败
 - 支持在页面中直接查看 `training_summary.json` 摘要和训练曲线
 - 支持对 ranking / pose 结果做 Top-N 预览和关键 ID 过滤
@@ -554,6 +555,7 @@ start_local_app.bat
   - 选择多条历史运行做并排比较
   - 对比 rule/ML 指标、训练摘要和 QC 摘要
   - 直接下载对比表 CSV
+  - 生成并下载当前对比 HTML 汇总页
 - 页面当前默认通过 [run_recommended_pipeline.py](run_recommended_pipeline.py) 的 CLI 子进程方式执行
 - 这样可以支持后台运行、任务队列和停止当前任务
 - 同时保留 `run_recommended_pipeline(...)` 这个 Python 级入口，便于后续继续扩展

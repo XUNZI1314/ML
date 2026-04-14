@@ -22,11 +22,13 @@ from app_metadata import APP_NAME, APP_RELEASE_CHANNEL, APP_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parent
 LOCAL_APP_RUN_ROOT = REPO_ROOT / "local_app_runs"
+COMPARE_EXPORT_ROOT = LOCAL_APP_RUN_ROOT / "compare_exports"
 PARAM_TEMPLATE_ROOT = LOCAL_APP_RUN_ROOT / "parameter_templates"
 APP_RUN_METADATA_NAME = "app_run_metadata.json"
 APP_STDOUT_NAME = "app_stdout.log"
 APP_STDERR_NAME = "app_stderr.log"
 LOCAL_APP_RUN_ROOT.mkdir(parents=True, exist_ok=True)
+COMPARE_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
 PARAM_TEMPLATE_ROOT.mkdir(parents=True, exist_ok=True)
 
 START_MODE_LABELS = {
@@ -1771,6 +1773,155 @@ def _build_metric_cards_html(cards: list[tuple[str, Any]]) -> str:
     return "".join(items)
 
 
+def _build_html_export_style() -> str:
+    return """
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --card: #fffdf8;
+      --line: #d8cfbf;
+      --ink: #1f2421;
+      --muted: #6b716d;
+      --accent: #0d6a57;
+      --accent-soft: #dcefe8;
+      --warn: #9a6700;
+      --bad: #9a2f2f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(180deg, #efe9da 0%, var(--bg) 52%, #ffffff 100%);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+    .page {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 28px 20px 56px;
+    }
+    .hero {
+      background: linear-gradient(135deg, #153d35 0%, #21574a 50%, #e3d3aa 100%);
+      color: #fffaf0;
+      padding: 24px 26px;
+      border-radius: 20px;
+      box-shadow: 0 18px 60px rgba(22, 45, 38, 0.18);
+    }
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      letter-spacing: 0.2px;
+    }
+    .hero p {
+      margin: 0;
+      color: rgba(255, 250, 240, 0.88);
+    }
+    .section {
+      margin-top: 18px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px 20px 18px;
+      box-shadow: 0 10px 28px rgba(28, 38, 33, 0.05);
+    }
+    .section h2 {
+      margin: 0 0 14px;
+      font-size: 18px;
+    }
+    .section h3 {
+      margin: 14px 0 8px;
+      font-size: 15px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .metric-card {
+      background: #fff;
+      border: 1px solid #e7ded0;
+      border-radius: 14px;
+      padding: 14px 14px 12px;
+    }
+    .metric-label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+    .metric-value {
+      font-size: 24px;
+      font-weight: 700;
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px 16px;
+    }
+    .meta-item {
+      padding: 10px 12px;
+      background: #faf7f0;
+      border-radius: 12px;
+      border: 1px solid #ece3d5;
+    }
+    .meta-label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .meta-value {
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      overflow: hidden;
+    }
+    .data-table th, .data-table td {
+      border: 1px solid #e6ddcf;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .data-table th {
+      background: #f4efe5;
+    }
+    pre {
+      background: #15211e;
+      color: #f6f2e8;
+      padding: 14px;
+      border-radius: 14px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+    }
+    ul {
+      margin: 10px 0 0 18px;
+      padding: 0;
+    }
+    .muted {
+      color: var(--muted);
+    }
+    .footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+    @media print {
+      body { background: #fff; }
+      .page { max-width: none; padding: 0; }
+      .hero, .section { box-shadow: none; }
+    }
+  </style>
+"""
+
+
 def _create_html_summary_export(
     run_root: Path,
     summary: dict[str, Any] | None,
@@ -1887,146 +2038,7 @@ def _create_html_summary_export(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{html.escape(APP_NAME)} | {html.escape(run_root.name)} | v{html.escape(APP_VERSION)}</title>
-  <style>
-    :root {{
-      --bg: #f4f1ea;
-      --card: #fffdf8;
-      --line: #d8cfbf;
-      --ink: #1f2421;
-      --muted: #6b716d;
-      --accent: #0d6a57;
-      --accent-soft: #dcefe8;
-      --warn: #9a6700;
-      --bad: #9a2f2f;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      background: linear-gradient(180deg, #efe9da 0%, var(--bg) 52%, #ffffff 100%);
-      color: var(--ink);
-      line-height: 1.55;
-    }}
-    .page {{
-      max-width: 1220px;
-      margin: 0 auto;
-      padding: 28px 20px 56px;
-    }}
-    .hero {{
-      background: linear-gradient(135deg, #153d35 0%, #21574a 50%, #e3d3aa 100%);
-      color: #fffaf0;
-      padding: 24px 26px;
-      border-radius: 20px;
-      box-shadow: 0 18px 60px rgba(22, 45, 38, 0.18);
-    }}
-    .hero h1 {{
-      margin: 0 0 8px;
-      font-size: 30px;
-      letter-spacing: 0.2px;
-    }}
-    .hero p {{
-      margin: 0;
-      color: rgba(255, 250, 240, 0.88);
-    }}
-    .section {{
-      margin-top: 18px;
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 20px 20px 18px;
-      box-shadow: 0 10px 28px rgba(28, 38, 33, 0.05);
-    }}
-    .section h2 {{
-      margin: 0 0 14px;
-      font-size: 18px;
-    }}
-    .grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-    }}
-    .metric-card {{
-      background: #fff;
-      border: 1px solid #e7ded0;
-      border-radius: 14px;
-      padding: 14px 14px 12px;
-    }}
-    .metric-label {{
-      font-size: 12px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      margin-bottom: 6px;
-    }}
-    .metric-value {{
-      font-size: 24px;
-      font-weight: 700;
-    }}
-    .meta {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 8px 16px;
-    }}
-    .meta-item {{
-      padding: 10px 12px;
-      background: #faf7f0;
-      border-radius: 12px;
-      border: 1px solid #ece3d5;
-    }}
-    .meta-label {{
-      color: var(--muted);
-      font-size: 12px;
-      margin-bottom: 4px;
-    }}
-    .meta-value {{
-      word-break: break-word;
-      white-space: pre-wrap;
-    }}
-    .data-table {{
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-      overflow: hidden;
-    }}
-    .data-table th, .data-table td {{
-      border: 1px solid #e6ddcf;
-      padding: 8px 10px;
-      text-align: left;
-      vertical-align: top;
-    }}
-    .data-table th {{
-      background: #f4efe5;
-    }}
-    pre {{
-      background: #15211e;
-      color: #f6f2e8;
-      padding: 14px;
-      border-radius: 14px;
-      overflow: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-family: Consolas, "Courier New", monospace;
-      font-size: 12px;
-    }}
-    ul {{
-      margin: 10px 0 0 18px;
-      padding: 0;
-    }}
-    .muted {{
-      color: var(--muted);
-    }}
-    .footer {{
-      margin-top: 18px;
-      color: var(--muted);
-      font-size: 12px;
-      text-align: center;
-    }}
-    @media print {{
-      body {{ background: #fff; }}
-      .page {{ max-width: none; padding: 0; }}
-      .hero, .section {{ box-shadow: none; }}
-    }}
-  </style>
+{_build_html_export_style()}
 </head>
 <body>
   <div class="page">
@@ -2404,6 +2416,8 @@ def _build_history_records() -> list[dict[str, Any]]:
         summary_path = run_root / "outputs" / "recommended_pipeline_summary.json"
         metadata = _load_json(metadata_path) or {}
         summary = _load_json(summary_path) or {}
+        if not metadata and not summary:
+            continue
 
         status = str(metadata.get("status") or ("success" if summary else "unknown"))
         started_at = str(
@@ -2576,6 +2590,108 @@ def _pick_compare_leader(
     return best_run_name, best_value
 
 
+def _create_history_compare_html_export(
+    selected_records: list[dict[str, Any]],
+    compare_df: pd.DataFrame,
+    *,
+    metric_key: str,
+    metric_label: str,
+    higher_is_better: bool,
+    leader_name: str | None,
+    leader_value: float | None,
+) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    export_dir = COMPARE_EXPORT_ROOT / stamp
+    export_dir.mkdir(parents=True, exist_ok=True)
+    html_path = export_dir / "history_compare_summary.html"
+
+    selected_rows_html = "".join(
+        "<li>"
+        f"{html.escape(str(item.get('run_name') or 'N/A'))} | "
+        f"{html.escape(str(item.get('status') or 'N/A'))} | "
+        f"{html.escape(str(item.get('started_at') or 'N/A'))}"
+        "</li>"
+        for item in selected_records
+    )
+
+    failed_rows_numeric = pd.to_numeric(compare_df.get("failed_rows"), errors="coerce").fillna(0)
+    warning_rows_numeric = pd.to_numeric(compare_df.get("warning_rows"), errors="coerce").fillna(0)
+    success_mask = compare_df["status"].astype(str).str.lower().eq("success")
+    clean_mask = success_mask & failed_rows_numeric.eq(0) & warning_rows_numeric.eq(0)
+    compare_cards = _build_metric_cards_html(
+        [
+            ("Compared Runs", len(compare_df)),
+            ("Success Runs", int(success_mask.sum())),
+            ("Clean Runs", int(clean_mask.sum())),
+            ("Primary Metric", metric_label),
+            ("Leader Run", leader_name or "N/A"),
+            ("Leader Value", leader_value),
+        ]
+    )
+
+    highlight_lines = [
+        f"当前主指标: {metric_label}（{'越高越好' if higher_is_better else '越低越好'}）",
+        f"领先运行: {leader_name or 'N/A'}",
+        f"当前 clean run 数量: {int(clean_mask.sum())} / {len(compare_df)}",
+    ]
+    if "failed_rows" in compare_df.columns:
+        highlight_lines.append(
+            f"所有选中运行的 failed_rows 合计: {int(failed_rows_numeric.sum())}"
+        )
+    if "warning_rows" in compare_df.columns:
+        highlight_lines.append(
+            f"所有选中运行的 warning_rows 合计: {int(warning_rows_numeric.sum())}"
+        )
+    highlights_html = "".join(f"<li>{html.escape(line)}</li>" for line in highlight_lines)
+
+    html_text = f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{html.escape(APP_NAME)} | History Compare | v{html.escape(APP_VERSION)}</title>
+{_build_html_export_style()}
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <h1>{html.escape(APP_NAME)} 多运行对比摘要</h1>
+      <p>版本: v{html.escape(APP_VERSION)} | 生成时间: {html.escape(_now_text())}</p>
+    </section>
+
+    <section class="section">
+      <h2>对比摘要</h2>
+      <div class="grid">{compare_cards}</div>
+    </section>
+
+    <section class="section">
+      <h2>选中的运行</h2>
+      {"<ul>" + selected_rows_html + "</ul>" if selected_rows_html else "<p class='muted'>当前没有选中运行。</p>"}
+    </section>
+
+    <section class="section">
+      <h2>重点观察</h2>
+      <ul>{highlights_html}</ul>
+    </section>
+
+    <section class="section">
+      <h2>完整对比表</h2>
+      {_df_to_html_table(compare_df, max_rows=max(20, len(compare_df)))}
+    </section>
+
+    <div class="footer">
+      该 HTML 为多运行对比导出页，可直接下载、发送或用浏览器打印为 PDF。
+    </div>
+  </div>
+</body>
+</html>
+"""
+    _write_text(html_path, html_text)
+    csv_path = export_dir / "history_compare_table.csv"
+    csv_path.write_text(compare_df.to_csv(index=False), encoding="utf-8")
+    return html_path
+
+
 def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None:
     if not history_records:
         st.info("当前还没有历史运行记录，暂时无法做多运行对比。")
@@ -2654,6 +2770,47 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         for column in chart_columns:
             chart_df[column] = pd.to_numeric(chart_df[column], errors="coerce")
         st.bar_chart(chart_df.set_index("run_name"), height=280)
+
+    export_col1, export_col2 = st.columns(2)
+    create_compare_html_clicked = export_col1.button(
+        "生成当前对比 HTML",
+        use_container_width=True,
+        key="create_compare_html_clicked",
+    )
+    if create_compare_html_clicked:
+        with st.spinner("正在生成多运行对比 HTML..."):
+            html_path = _create_history_compare_html_export(
+                selected_records,
+                compare_df,
+                metric_key=metric_key,
+                metric_label=metric_labels.get(metric_key, metric_key),
+                higher_is_better=higher_is_better,
+                leader_name=leader_name,
+                leader_value=leader_value,
+            )
+        st.session_state["last_compare_export_html"] = str(html_path)
+        st.session_state["last_compare_export_html_message"] = f"已生成多运行对比 HTML: {html_path}"
+
+    last_compare_export_html = st.session_state.get("last_compare_export_html")
+    last_compare_export_html_message = str(st.session_state.get("last_compare_export_html_message") or "")
+    if last_compare_export_html_message:
+        st.success(last_compare_export_html_message)
+    if last_compare_export_html and Path(str(last_compare_export_html)).exists():
+        compare_html_path = Path(str(last_compare_export_html))
+        st.caption(f"当前多运行对比 HTML: {compare_html_path}")
+        export_col1.download_button(
+            label="下载当前对比 HTML",
+            data=compare_html_path.read_bytes(),
+            file_name=compare_html_path.name,
+            mime="text/html",
+            use_container_width=True,
+        )
+        if export_col2.button("打开当前对比 HTML", use_container_width=True, key="open_compare_html_clicked"):
+            ok, message = _open_local_path(compare_html_path)
+            if ok:
+                st.success(message)
+            else:
+                st.error(message)
 
     st.dataframe(compare_df, use_container_width=True, hide_index=True)
     st.download_button(
@@ -2871,6 +3028,8 @@ def _initialize_state() -> None:
     st.session_state.setdefault("last_export_message", "")
     st.session_state.setdefault("last_export_html", None)
     st.session_state.setdefault("last_export_html_message", "")
+    st.session_state.setdefault("last_compare_export_html", None)
+    st.session_state.setdefault("last_compare_export_html_message", "")
     st.session_state.setdefault("last_bundle_import", None)
     st.session_state.setdefault("last_bundle_import_message", "")
     st.session_state.setdefault("last_preflight", None)
