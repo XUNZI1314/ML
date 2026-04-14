@@ -2448,6 +2448,223 @@ def _build_history_table(records: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _load_training_summary_payload(
+    summary: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    training_summary_path = _resolve_output_file(
+        "model_outputs",
+        "training_summary.json",
+        summary=summary,
+        metadata=metadata,
+    )
+    if training_summary_path is None or not training_summary_path.exists():
+        return None
+    payload = _load_json(training_summary_path)
+    return payload if isinstance(payload, dict) else None
+
+
+def _coerce_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(number):
+        return None
+    return number
+
+
+def _build_run_compare_row(
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    run_root = Path(str(record.get("run_root")))
+    metadata = _load_json(run_root / APP_RUN_METADATA_NAME) or {}
+    summary = _load_json(run_root / "outputs" / "recommended_pipeline_summary.json") or {}
+    diagnostics = metadata.get("diagnostics") if isinstance(metadata.get("diagnostics"), dict) else {}
+    comparison = summary.get("comparison") if isinstance(summary.get("comparison"), dict) else {}
+    baseline = comparison.get("baseline_rule_vs_ml") if isinstance(comparison.get("baseline_rule_vs_ml"), dict) else {}
+    calibrated = comparison.get("calibrated_rule_vs_ml") if isinstance(comparison.get("calibrated_rule_vs_ml"), dict) else {}
+
+    training_payload = _load_training_summary_payload(summary, metadata)
+    training_summary = training_payload.get("summary") if isinstance(training_payload, dict) and isinstance(training_payload.get("summary"), dict) else {}
+    pseudo_block = training_payload.get("pseudo") if isinstance(training_payload, dict) and isinstance(training_payload.get("pseudo"), dict) else {}
+    pseudo_distribution = pseudo_block.get("distribution") if isinstance(pseudo_block.get("distribution"), dict) else {}
+
+    qc_payload = _load_feature_qc_payload(summary, metadata)
+    processing_summary = qc_payload.get("processing_summary") if isinstance(qc_payload, dict) and isinstance(qc_payload.get("processing_summary"), dict) else {}
+
+    started_at = str(
+        metadata.get("started_at")
+        or record.get("started_at")
+        or datetime.fromtimestamp(run_root.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+    )
+    status = str(metadata.get("status") or record.get("status") or ("success" if summary else "unknown"))
+    start_mode = str(metadata.get("start_mode") or summary.get("start_mode") or record.get("start_mode") or "N/A")
+
+    return {
+        "run_name": run_root.name,
+        "status": status,
+        "started_at": started_at,
+        "start_mode": start_mode,
+        "execution_mode": str(metadata.get("execution_mode") or "N/A"),
+        "label_valid_count": int(summary.get("label_valid_count") or record.get("label_valid_count") or 0),
+        "label_class_count": int(summary.get("label_class_count") or 0),
+        "calibration_possible": bool(summary.get("calibration_possible", False)),
+        "baseline_rank_spearman": baseline.get("rank_spearman"),
+        "baseline_rule_auc": baseline.get("rule_auc"),
+        "calibrated_rank_spearman": calibrated.get("rank_spearman"),
+        "calibrated_rule_auc": calibrated.get("rule_auc"),
+        "training_mode": str(training_payload.get("mode") or "N/A") if isinstance(training_payload, dict) else "N/A",
+        "train_rows": (
+            training_payload.get("n_rows_train", training_summary.get("train_size"))
+            if isinstance(training_payload, dict)
+            else None
+        ),
+        "val_rows": (
+            training_payload.get("n_rows_val", training_summary.get("val_size"))
+            if isinstance(training_payload, dict)
+            else None
+        ),
+        "feature_count": training_payload.get("n_features") if isinstance(training_payload, dict) else None,
+        "best_epoch": training_summary.get("best_epoch"),
+        "best_val_loss": training_summary.get("best_val_loss"),
+        "pseudo_positive_rate": pseudo_block.get(
+            "pseudo_positive_rate",
+            pseudo_distribution.get("pseudo_positive_rate"),
+        ),
+        "total_rows": processing_summary.get("total_rows"),
+        "ok_rows": processing_summary.get("ok_rows"),
+        "failed_rows": processing_summary.get("failed_rows"),
+        "warning_rows": processing_summary.get("rows_with_warning_message"),
+        "failed_stage": str(diagnostics.get("failed_stage") or record.get("failed_stage") or "N/A"),
+        "diagnostic_category": str(diagnostics.get("category") or "N/A"),
+    }
+
+
+def _build_history_compare_table(records: list[dict[str, Any]]) -> pd.DataFrame:
+    rows = [_build_run_compare_row(record) for record in records]
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+def _pick_compare_leader(
+    compare_df: pd.DataFrame,
+    *,
+    metric_key: str,
+    higher_is_better: bool,
+) -> tuple[str | None, float | None]:
+    if compare_df.empty or metric_key not in compare_df.columns:
+        return None, None
+
+    best_run_name: str | None = None
+    best_value: float | None = None
+    for row in compare_df.to_dict(orient="records"):
+        value = _coerce_float(row.get(metric_key))
+        if value is None:
+            continue
+        if best_value is None:
+            best_value = value
+            best_run_name = str(row.get("run_name") or "")
+            continue
+        if higher_is_better and value > best_value:
+            best_value = value
+            best_run_name = str(row.get("run_name") or "")
+        if not higher_is_better and value < best_value:
+            best_value = value
+            best_run_name = str(row.get("run_name") or "")
+    return best_run_name, best_value
+
+
+def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None:
+    if not history_records:
+        st.info("当前还没有历史运行记录，暂时无法做多运行对比。")
+        return
+
+    record_map = {str(item["label"]): item for item in history_records}
+    compare_options = [str(item["label"]) for item in history_records]
+    default_compare = compare_options[: min(3, len(compare_options))]
+    selected_labels = st.multiselect(
+        "选择要对比的运行",
+        options=compare_options,
+        default=default_compare,
+        key="compare_history_labels",
+    )
+    if not selected_labels:
+        st.info("先选择至少一条历史运行记录。")
+        return
+
+    selected_records = [record_map[label] for label in selected_labels if label in record_map]
+    compare_df = _build_history_compare_table(selected_records)
+    if compare_df.empty:
+        st.info("当前选中的运行没有可对比的摘要信息。")
+        return
+
+    metric_labels = {
+        "calibrated_rank_spearman": "Calibrated Rank Spearman",
+        "baseline_rank_spearman": "Baseline Rank Spearman",
+        "best_val_loss": "Best Val Loss",
+        "failed_rows": "Failed Rows",
+        "warning_rows": "Warning Rows",
+    }
+    metric_key = st.selectbox(
+        "主要对比指标",
+        options=list(metric_labels.keys()),
+        format_func=lambda key: metric_labels.get(key, key),
+        key="history_compare_metric_key",
+    )
+    higher_is_better = metric_key not in {"best_val_loss", "failed_rows", "warning_rows"}
+    leader_name, leader_value = _pick_compare_leader(
+        compare_df,
+        metric_key=metric_key,
+        higher_is_better=higher_is_better,
+    )
+
+    failed_rows_numeric = pd.to_numeric(compare_df.get("failed_rows"), errors="coerce").fillna(0)
+    warning_rows_numeric = pd.to_numeric(compare_df.get("warning_rows"), errors="coerce").fillna(0)
+    clean_run_mask = compare_df["status"].astype(str).str.lower().eq("success") & failed_rows_numeric.eq(0) & warning_rows_numeric.eq(0)
+    success_count = int(compare_df["status"].astype(str).str.lower().eq("success").sum())
+    clean_count = int(clean_run_mask.sum())
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Compared Runs", len(compare_df))
+    c2.metric("Success Runs", success_count)
+    c3.metric("Clean Runs", clean_count)
+    c4.metric("Leader Value", _fmt_metric(leader_value))
+    st.caption(
+        f"当前按 {metric_labels.get(metric_key, metric_key)} "
+        f"{'越高越好' if higher_is_better else '越低越好'} 比较；领先运行: {leader_name or 'N/A'}"
+    )
+
+    chart_columns = []
+    for column in [
+        "baseline_rank_spearman",
+        "calibrated_rank_spearman",
+        "best_val_loss",
+        "failed_rows",
+        "warning_rows",
+    ]:
+        if column not in compare_df.columns:
+            continue
+        series = pd.to_numeric(compare_df[column], errors="coerce")
+        if series.notna().any():
+            chart_columns.append(column)
+    if chart_columns:
+        chart_df = compare_df.loc[:, ["run_name"] + chart_columns].copy()
+        for column in chart_columns:
+            chart_df[column] = pd.to_numeric(chart_df[column], errors="coerce")
+        st.bar_chart(chart_df.set_index("run_name"), height=280)
+
+    st.dataframe(compare_df, use_container_width=True, hide_index=True)
+    st.download_button(
+        label="下载当前对比表 CSV",
+        data=compare_df.to_csv(index=False).encode("utf-8"),
+        file_name="history_compare_table.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+
 def _build_failure_diagnostics(
     *,
     returncode: int,
@@ -3132,8 +3349,8 @@ def main() -> None:
             else:
                 st.error(message)
 
-    tab_summary, tab_qc, tab_history, tab_ranking, tab_pose, tab_report, tab_logs, tab_diag = st.tabs(
-        ["摘要", "QC/Warning", "历史", "排名结果", "Pose 结果", "执行报告", "日志", "诊断"]
+    tab_summary, tab_qc, tab_compare, tab_history, tab_ranking, tab_pose, tab_report, tab_logs, tab_diag = st.tabs(
+        ["摘要", "QC/Warning", "运行对比", "历史", "排名结果", "Pose 结果", "执行报告", "日志", "诊断"]
     )
 
     with tab_summary:
@@ -3290,13 +3507,16 @@ def main() -> None:
             metadata if isinstance(metadata, dict) else None,
         )
 
+    with tab_compare:
+        _render_history_compare_panel(history_records)
+
     with tab_history:
         if not history_records:
             st.info("当前还没有历史运行记录。")
         else:
             st.subheader("最近运行记录")
             st.dataframe(_build_history_table(history_records), use_container_width=True, hide_index=True)
-            st.caption("可在左侧“运行历史”区域加载某次历史结果，并恢复对应表单参数。")
+            st.caption("可在左侧“运行历史”区域加载某次历史结果，并恢复对应表单参数；需要多次运行对比时，直接切到“运行对比”页。")
 
     with tab_ranking:
         if not isinstance(summary, dict):
