@@ -227,11 +227,31 @@
 - 输出 smoke_test_report.md 便于快速审阅本轮回归
 - 新增推荐执行入口 `run_recommended_pipeline.py`
 - 支持从 `input_csv` 或已有 `pose_features.csv` 启动
+- 已支持“CLI + 可调用函数”双入口
 - 自动识别是否有足够 `label` 来继续 compare/calibrate/strategy optimize
 - 输出 `recommended_pipeline_report.md`，汇总本次执行了哪些步骤、关键指标和关键产物
 - 新增本地交互入口 [local_ml_app.py](local_ml_app.py)
 - 支持通过本地页面上传或直接指定本机文件路径
 - 支持在页面中填写常用参数、执行推荐流程、预览排名和下载关键产物
+- 支持保存/载入参数模板，减少重复填写
+- 支持加载最近运行历史并恢复结果与表单参数
+- 支持在页面中输出失败诊断摘要，帮助快速定位输入路径/依赖/阶段性失败
+- 支持在页面中直接查看 `training_summary.json` 摘要和训练曲线
+- 支持对 ranking / pose 结果做 Top-N 预览和关键 ID 过滤
+- 支持查看运行产物清单，并一键打开最近运行目录或输出目录
+- 支持把当前运行的关键结果、日志和 metadata 一键打包成 zip 汇总包
+- 页面内部现在优先通过 `run_recommended_pipeline(...)` 直接调用 orchestration 函数，保留 CLI 仅用于复现和独立执行
+- 新增桌面启动器 [ml_desktop_launcher.py](ml_desktop_launcher.py) 与构建脚本 [build_desktop_app.bat](build_desktop_app.bat)
+- 已可构建 `dist/ML_Local_App.exe`，双击后会拉起本地交互界面
+- 新增便携目录打包脚本 [build_portable_bundle.py](build_portable_bundle.py) 与 [build_portable_bundle.bat](build_portable_bundle.bat)
+- 已可构建 `portable_dist/ML_Portable/`，整个目录可直接拷走使用
+- 新增发布打包脚本 [build_portable_release.py](build_portable_release.py) 与 [build_portable_release.bat](build_portable_release.bat)
+- 已可构建 `portable_dist/ML_Portable_release.zip`，方便直接分发
+- 新增统一版本元数据 [app_metadata.py](app_metadata.py)
+- 当前页面标题、桌面启动器、自检输出、便携包和发布 manifest 已统一携带版本信息
+- 新增品牌资产生成脚本 [generate_brand_assets.py](generate_brand_assets.py)
+- 已生成 `assets/app_icon.png` 与 `assets/app_icon.ico`
+- 当前 Streamlit 页面 favicon、桌面启动器窗口和桌面 exe 已统一接入应用图标
 - 新增 [export_structure_annotations.py](export_structure_annotations.py)
 - 支持对单个复合物导出 residue/interface 的 viewer-friendly JSON/CSV
 - 输出 `analysis_bundle.json` 作为后续展示层的基础数据契约
@@ -498,18 +518,116 @@ start_local_app.bat
   - `train_batch_size`
   - `train_val_ratio`
   - `seed`
-- 直接调用 [run_recommended_pipeline.py](run_recommended_pipeline.py)
+- 页面内部优先直接调用 [run_recommended_pipeline.py](run_recommended_pipeline.py) 暴露的函数入口
+- 同时保留 CLI 等价命令，便于复现和脱离 UI 独立执行
 - 运行后可在页面中预览：
   - `nanobody_ranking.csv`
   - `pose_predictions.csv`
+  - `training_summary.json`
   - `recommended_pipeline_report.md`
   - `recommended_pipeline_summary.json`
+- 支持保存和载入参数模板
+- 支持查看最近运行历史并恢复某次运行结果
+- 支持按失败阶段给出诊断摘要和下一步建议
+- 支持在页面中查看训练摘要卡片和 `train_log.csv` 曲线
+- 支持对 ranking / pose 结果做 Top-N 过滤和关键 ID 检索
+- 支持展示运行产物清单，并可直接打开最近运行目录或输出目录
+- 支持把当前运行的关键结果、日志和 metadata 一键打包成 zip 汇总包
 - 关键输出会写到：
   - `local_app_runs/<run_name>/outputs`
 
 说明:
 - 这是一层“本地交互式 UI 壳”，不是重写后的新后端。
 - 当前更适合本机运行和比赛演示；后续如需要，再进一步打包成桌面程序。
+
+### 4.13 构建桌面可执行程序
+
+如果你希望直接双击启动，而不是先手工打开终端，可以使用桌面启动器：
+
+```bash
+build_desktop_app.bat
+```
+
+构建完成后会生成：
+
+```bash
+dist\ML_Local_App.exe
+```
+
+你也可以先做无界面自检：
+
+```bash
+python ml_desktop_launcher.py --selftest
+dist\ML_Local_App.exe --selftest
+```
+
+当前桌面版的定位:
+- 这是一个“桌面 launcher”，不是把整套分析内核完全重新打包成全独立便携版
+- 它会自动定位当前仓库、复用当前 `.venv` 和 [local_ml_app.py](local_ml_app.py)
+- 双击 `ML_Local_App.exe` 后，会弹出一个小型桌面控制窗口，并自动打开浏览器中的本地交互界面
+- 关闭这个桌面控制窗口时，会同时停止本地 Streamlit 服务
+- 当前启动器窗口和自检输出都带版本号，便于区分不同发布批次
+- 当前 exe 已接入 `assets/app_icon.ico`，不再使用默认图标
+
+注意:
+- 当前 `dist\ML_Local_App.exe` 最好保留在本仓库目录树内使用
+- 如果你把 exe 单独拷到别处，它将无法自动找到当前仓库中的 `local_ml_app.py` 和 `.venv`
+
+### 4.14 构建便携目录版
+
+如果你希望做成“整个目录可拷走”的版本，而不只是当前仓库里的 launcher，可执行：
+
+```bash
+build_portable_bundle.bat
+```
+
+构建完成后会生成：
+
+```bash
+portable_dist\ML_Portable\
+```
+
+目录中会包含：
+- `ML_Local_App.exe`
+- `APP_VERSION.json`
+- `app\` 下的运行源码
+- `app\assets\app_icon.png`
+- `app\assets\app_icon.ico`
+- `app\.venv\`
+- `app\local_app_runs\`
+- `portable_bundle_manifest.json`
+- `PORTABLE_README.txt`
+
+当前便携目录版的定位:
+- 它不是“单个 exe 完全独立”
+- 它是“整个目录可直接拷走”的便携包
+- 便携包中的 exe 会优先定位同级 `app\` 目录，并使用 `app\.venv` 启动本地界面
+- 只要保持整个目录结构不变，就可以在其他 Windows 机器上直接双击 `ML_Local_App.exe`
+
+### 4.15 构建可分发 zip 发布包
+
+如果你希望直接得到一个可发给别人的 zip，而不是手工压缩便携目录，可执行：
+
+```bash
+build_portable_release.bat
+```
+
+构建完成后会生成：
+
+```bash
+portable_dist\ML_Portable_release.zip
+portable_dist\ML_Portable_release.manifest.json
+```
+
+其中：
+- `ML_Portable_release.zip` 是可直接分发的发布包
+- `ML_Portable_release.manifest.json` 记录了 zip 的版本号、SHA256、文件大小和打包条目
+
+当前发布包的定位:
+- 先自动重建桌面 launcher
+- 再自动重建 `portable_dist\ML_Portable\`
+- 最后把整个便携目录压缩成单个 zip
+- 解压后，仍然是“目录便携版”的运行方式；也就是保持解压后的目录结构不变，再双击 `ML_Local_App.exe`
 
 ---
 

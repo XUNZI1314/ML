@@ -8,6 +8,10 @@ __pycache__/
 local_app_runs/
 .streamlit/
 ML_source_bundle.zip
+build/
+dist/
+portable_dist/
+*.spec
 
 smoke_test_outputs*/
 recommended_pipeline_test*/

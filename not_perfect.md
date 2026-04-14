@@ -46,6 +46,127 @@
   - 下载关键 JSON / CSV / Markdown 产物
 - 新增 `.gitignore`，避免把 `.venv`、本地运行产物和测试输出目录直接提交到 GitHub。
 
+## 已完成的本地交互壳增强版（2026-04-14）
+
+- 在 [local_ml_app.py](local_ml_app.py) 中补齐了“更像本地软件”的三块基础体验：
+  - 运行历史
+  - 参数模板保存/载入
+  - 失败诊断摘要
+- 当前已经支持：
+  - 扫描 `local_app_runs/` 下的历史运行记录
+  - 一键载入某次历史结果，并恢复对应表单参数
+  - 将当前表单参数保存成模板 JSON
+  - 从已保存模板恢复常用参数组合
+  - 在失败时展示失败阶段、输入定位、stderr 摘要和下一步建议
+- 这一轮仍然没有改动现有 rule / ML 主链路，增强点仍然全部落在本地交互壳。
+
+## 已完成的本地交互壳结果面板增强版（2026-04-14）
+
+- 在 [local_ml_app.py](local_ml_app.py) 中继续补了“结果更直观”的几个低侵入增强点：
+  - `training_summary.json` 摘要卡片
+  - `train_log.csv` 训练曲线预览
+  - ranking / pose 结果 Top-N 过滤
+  - 运行产物清单
+  - 一键打开最近运行目录 / 输出目录
+- 当前已经支持：
+  - 在“摘要”页直接查看训练模式、训练/验证样本数、最佳 epoch、最佳验证损失等关键指标
+  - 在页面中预览训练曲线，而不需要手工打开 `train_log.csv`
+  - 对 `nanobody_ranking.csv`、`pose_predictions.csv` 做前 N 行预览和关键 ID 过滤
+  - 将 `pose_predictions.csv`、`training_summary.json`、`train_log.csv` 也纳入关键下载产物
+  - 在本机直接打开最近一次运行目录和输出目录，便于人工复核和拷贝结果
+- 这一轮依然没有改动算法主链路，增强点仍然全部落在本地交互壳。
+
+## 已完成的本地交互壳汇总导出版（2026-04-14）
+
+- 在 [local_ml_app.py](local_ml_app.py) 中补了“当前运行一键汇总打包”能力。
+- 当前已经支持：
+  - 对最近一次运行生成 `summary_bundle.zip`
+  - 将关键结果、训练摘要、日志、metadata 和 manifest 一起打包
+  - 在页面里直接下载该 zip，或打开汇总包目录
+- 默认汇总包当前会优先包含：
+  - `app_run_metadata.json`
+  - `app_stdout.log`
+  - `app_stderr.log`
+  - `nanobody_rule_ranking.csv`
+  - `nanobody_ranking.csv`
+  - `pose_predictions.csv`
+  - `training_summary.json`
+  - `train_log.csv`
+  - `bundle_manifest.json`
+- 这一步依然只增强本地交互壳，不改动现有算法和推荐流程。
+
+## 已完成的 orchestration 双入口版（2026-04-14）
+
+- 在 [run_recommended_pipeline.py](run_recommended_pipeline.py) 中补了“CLI + 可调用函数”双入口。
+- 当前已经支持：
+  - 保留原有命令行入口不变
+  - 通过 `run_recommended_pipeline(...)` 直接从 Python 内部调用推荐流程
+  - 返回结构化 `summary`，便于本地交互壳直接消费
+- 在 [local_ml_app.py](local_ml_app.py) 中已经改为优先直接调用该函数入口：
+  - 减少 UI 壳额外包一层 Python 子进程
+  - 仍然保留 CLI 等价命令写入 metadata，便于复现和排错
+- 这一步仍然没有改动底层 rule / ML 子脚本，只是减少了 orchestration 这一层的重复包装。
+
+## 已完成的桌面启动器基础版（2026-04-14）
+
+- 新增 [ml_desktop_launcher.py](ml_desktop_launcher.py)，提供一个很薄的桌面 launcher。
+- 新增 [build_desktop_app.bat](build_desktop_app.bat)，可直接构建 `dist/ML_Local_App.exe`。
+- 当前已经支持：
+  - 双击 `ML_Local_App.exe` 启动本地交互界面
+  - 自动定位当前仓库根目录
+  - 自动复用当前 `.venv`
+  - 自动打开浏览器中的本地页面
+  - 通过一个小型桌面控制窗口统一停止本地 Streamlit 服务
+  - 使用 `--selftest` 做无界面自检
+- 这一步的定位是“桌面启动器基础版”，不是把整个仓库彻底做成可脱离源码目录的全独立便携包。
+
+## 已完成的便携目录版（2026-04-14）
+
+- 新增 [build_portable_bundle.py](build_portable_bundle.py) 和 [build_portable_bundle.bat](build_portable_bundle.bat)。
+- 当前已经支持：
+  - 构建 `portable_dist/ML_Portable/`
+  - 将桌面 launcher、运行源码和 `app/.venv` 一起整理成一个便携目录
+  - 在便携目录里直接双击 `ML_Local_App.exe`
+  - 让 exe 优先命中同级 `app/` 目录，而不是回退到原仓库
+  - 通过 `--selftest` 验证便携目录内部的路径解析
+- 这一步的定位是“可拷走的便携目录版”，不是“单个 exe 完全独立版”。
+
+## 已完成的 zip 发布版（2026-04-14）
+
+- 新增 [build_portable_release.py](build_portable_release.py) 和 [build_portable_release.bat](build_portable_release.bat)。
+- 当前已经支持：
+  - 单按钮重建桌面 launcher
+  - 单按钮重建便携目录版
+  - 自动生成 `portable_dist/ML_Portable_release.zip`
+  - 自动生成 `portable_dist/ML_Portable_release.manifest.json`
+  - 在 manifest 中记录 zip 的 SHA256、大小和条目清单
+- 这一步的定位是“可直接分发的 zip 发布版”，但运行形态仍然是“解压后按便携目录版运行”。
+
+## 已完成的版本化发布元数据版（2026-04-14）
+
+- 新增 [app_metadata.py](app_metadata.py)，把应用名称、版本号、通道和发布日期统一收口。
+- 当前已经支持：
+  - 本地页面标题显示版本号
+  - 桌面启动器窗口显示版本号和发布通道
+  - `--selftest` 输出版本号
+  - `portable_dist/ML_Portable/APP_VERSION.json`
+  - `portable_dist/ML_Portable_release.manifest.json` 中记录版本号和发布通道
+- 这一步的意义主要是让桌面版、便携版和 zip 发布包之间有统一版本追踪，不再是“只有文件名不同”。 
+
+## 已完成的品牌图标基础版（2026-04-14）
+
+- 新增 [generate_brand_assets.py](generate_brand_assets.py)。
+- 当前已经生成：
+  - `assets/app_icon.png`
+  - `assets/app_icon.ico`
+- 当前已经接入：
+  - Streamlit 页面 favicon
+  - 桌面启动器窗口图标
+  - `PyInstaller` 生成的桌面 exe 图标
+  - 便携目录版中的 `app/assets/`
+  - zip 发布包中的 `app/assets/`
+- 这一步的目标不是做完整品牌系统，而是先让桌面版和发布包不再使用默认图标，提升软件完成度。
+
 ## 已推进的展示层准备（2026-04-14）
 
 - 新增 [export_structure_annotations.py](export_structure_annotations.py)，在不改现有 ranking / training 主链路的前提下，补出一层面向 viewer 的结构化导出。
@@ -161,34 +282,40 @@
 
 ### 第二优先级：把“结果更直观”做出来
 
-- 直接在界面里预览：
+- [已完成基础增强] 直接在界面里预览：
   - `nanobody_ranking.csv`
   - `pose_predictions.csv`
   - `training_summary.json`
   - `recommended_pipeline_report.md`
-- 增加“只看 Top-N 排名”的筛选
-- 增加基础统计卡片：
+- [已完成基础增强] 增加“只看 Top-N 排名”的筛选
+- [已完成基础增强] 增加基础统计卡片：
   - 样本数
   - nanobody 数
   - 是否启用 calibration
   - rule/ML 主要指标
-- 增加失败行或 warning 的可读展示
+- [未完成] 增加失败行或 warning 的可读展示
 
 ### 第三优先级：把“本地软件体验”补齐
 
-- 最近一次运行历史
-- 一键打开输出目录
-- 一键导出当前结果汇总
-- 输入参数保存/载入
-- 常见错误提示模板化
+- [已完成基础增强] 最近一次运行历史
+- [已完成基础增强] 一键打开输出目录
+- [已完成基础增强] 一键导出当前结果汇总
+- [已完成基础增强] 输入参数保存/载入
+- [已完成基础增强] 常见错误提示模板化
 
 ## 面向“本地交互式软件”的建议后续顺序
 
-1. [未完成] 把 [run_recommended_pipeline.py](run_recommended_pipeline.py) 抽成“CLI + 可调用函数”双入口，减少 UI 壳和命令行逻辑重复。
+1. [已完成基础增强] 把 [run_recommended_pipeline.py](run_recommended_pipeline.py) 抽成“CLI + 可调用函数”双入口，减少 UI 壳和命令行逻辑重复。
 2. [已完成基础版] 新增本地交互入口文件，先做最小运行面板，不碰算法逻辑。
 3. [已完成基础版] 把 `recommended_pipeline_summary.json`、`recommended_pipeline_report.md`、`nanobody_ranking.csv` 接成结果面板。
-4. [进行中] 再补上传体验、历史记录、导出按钮。
-5. [未完成] 最后再考虑是否打包成桌面可执行程序。
+4. [已完成基础增强] 再补上传体验、历史记录、导出按钮、训练摘要和结果筛选。
+5. [已完成基础增强] 把“导出当前结果汇总”补成单文件打包或单按钮汇总导出。
+6. [已完成基础版] 打包成桌面可执行程序的 launcher 版本。
+7. [已完成基础版] 做成“整个目录可拷走”的便携版。
+8. [已完成基础版] 补出可直接分发的 zip 发布版。
+9. [已完成基础增强] 补齐统一版本元数据与发布追踪信息。
+10. [已完成基础增强] 补齐品牌图标基础版。
+11. [未完成] 如果后续需要，再继续推进成“单个 exe 也能完全独立”的完整便携版。
 
 ## 1. 几何特征仍以 proxy 为主（已部分收紧）
 
@@ -412,6 +539,13 @@
 
 如果下一轮继续贴近“本地交互式软件”的目标，最建议先做的是：
 
-1. 把 [run_recommended_pipeline.py](run_recommended_pipeline.py) 收敛成可直接被 UI 调用的函数入口，减少 subprocess 包装层。
-2. 在 [local_ml_app.py](local_ml_app.py) 中补运行历史、错误定位、参数模板保存/载入。
-3. 最后再考虑把当前本地页面进一步打包成桌面可执行程序。
+1. [已完成基础增强] 把 [run_recommended_pipeline.py](run_recommended_pipeline.py) 收敛成可直接被 UI 调用的函数入口，减少 subprocess 包装层。
+2. [已完成基础增强] 在 [local_ml_app.py](local_ml_app.py) 中补运行历史、错误定位、参数模板保存/载入。
+3. [已完成基础增强] 在 [local_ml_app.py](local_ml_app.py) 中补训练摘要、训练曲线、结果筛选、产物清单和本地目录打开能力。
+4. [已完成基础增强] 把“关键产物下载”进一步收敛成单次运行的一键打包导出。
+5. [已完成基础版] 把当前本地页面进一步打包成桌面可执行程序 launcher。
+6. [已完成基础版] 把桌面程序从“依赖当前仓库目录”推进到“整个目录可拷走”的便携版。
+7. [已完成基础版] 在便携目录版基础上补出可直接分发的 zip 发布包。
+8. [已完成基础增强] 在桌面版、便携版和 zip 发布包中补齐统一版本元数据。
+9. [已完成基础增强] 补品牌图标和桌面版基础品牌化资源。
+10. [未完成] 如果后续需要，再把桌面程序从“整个目录便携”推进到“单个 exe 完全独立”。
