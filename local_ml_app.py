@@ -16,7 +16,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from app_metadata import APP_NAME, APP_RELEASE_CHANNEL, APP_VERSION
 
@@ -30,6 +30,10 @@ APP_STDERR_NAME = "app_stderr.log"
 LOCAL_APP_RUN_ROOT.mkdir(parents=True, exist_ok=True)
 COMPARE_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
 PARAM_TEMPLATE_ROOT.mkdir(parents=True, exist_ok=True)
+
+PDF_PAGE_WIDTH = 1240
+PDF_PAGE_HEIGHT = 1754
+PDF_PAGE_MARGIN = 72
 
 START_MODE_LABELS = {
     "input_csv": "从 input_csv 开始",
@@ -1661,11 +1665,12 @@ def _collect_export_bundle_members(
 
     exports_dir = run_root / "exports"
     if exports_dir.exists():
-        for file_path in sorted(exports_dir.glob("*.html")):
-            add_file(
-                file_path,
-                Path(run_root.name) / "exports" / file_path.name,
-            )
+        for pattern in ["*.html", "*.pdf"]:
+            for file_path in sorted(exports_dir.glob(pattern)):
+                add_file(
+                    file_path,
+                    Path(run_root.name) / "exports" / file_path.name,
+                )
 
     return members, notes
 
@@ -1928,6 +1933,190 @@ def _build_html_export_style() -> str:
 """
 
 
+def _load_pdf_font(*, size: int, bold: bool = False) -> ImageFont.ImageFont:
+    candidates: list[Path] = []
+    if os.name == "nt":
+        if bold:
+            candidates.extend(
+                [
+                    Path(r"C:\Windows\Fonts\msyhbd.ttc"),
+                    Path(r"C:\Windows\Fonts\simhei.ttf"),
+                    Path(r"C:\Windows\Fonts\arialbd.ttf"),
+                ]
+            )
+        candidates.extend(
+            [
+                Path(r"C:\Windows\Fonts\msyh.ttc"),
+                Path(r"C:\Windows\Fonts\simhei.ttf"),
+                Path(r"C:\Windows\Fonts\arial.ttf"),
+            ]
+        )
+    else:
+        candidates.extend(
+            [
+                Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+                Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
+            ]
+        )
+
+    seen_paths: set[str] = set()
+    for path in candidates:
+        path_key = str(path)
+        if path_key in seen_paths:
+            continue
+        seen_paths.add(path_key)
+        if not path.exists():
+            continue
+        try:
+            return ImageFont.truetype(str(path), size=size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _wrap_pdf_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    *,
+    font: ImageFont.ImageFont,
+    max_width: int,
+) -> list[str]:
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if normalized == "":
+        return [""]
+
+    wrapped: list[str] = []
+    for paragraph in normalized.split("\n"):
+        if paragraph == "":
+            wrapped.append("")
+            continue
+
+        current = ""
+        for char in paragraph:
+            trial = current + char
+            try:
+                width = draw.textlength(trial, font=font)
+            except Exception:
+                width = len(trial) * max(1, int(getattr(font, "size", 16)))
+            if current and width > max_width:
+                wrapped.append(current)
+                current = char
+            else:
+                current = trial
+        if current:
+            wrapped.append(current)
+    return wrapped or [""]
+
+
+def _df_to_pdf_lines(
+    df: pd.DataFrame | None,
+    *,
+    max_rows: int = 12,
+    max_cols: int = 8,
+) -> list[str]:
+    if df is None or df.empty:
+        return ["暂无可展示内容。"]
+
+    view = df.head(int(max_rows)).copy()
+    omitted_columns: list[str] = []
+    if len(view.columns) > int(max_cols):
+        omitted_columns = [str(column) for column in view.columns[int(max_cols):]]
+        view = view.loc[:, list(view.columns[: int(max_cols)])]
+
+    try:
+        view = view.fillna("")
+    except Exception:
+        pass
+    text_lines = view.to_string(index=False).splitlines()
+    if len(df) > int(max_rows):
+        text_lines.append(f"... 省略 {len(df) - int(max_rows)} 行")
+    if omitted_columns:
+        text_lines.append("... 省略列: " + ", ".join(omitted_columns[:10]))
+    return text_lines
+
+
+def _build_pdf_document(
+    pdf_path: Path,
+    *,
+    title: str,
+    subtitle_lines: list[str],
+    sections: list[tuple[str, list[str]]],
+) -> Path:
+    page_width = PDF_PAGE_WIDTH
+    page_height = PDF_PAGE_HEIGHT
+    margin = PDF_PAGE_MARGIN
+
+    title_font = _load_pdf_font(size=34, bold=True)
+    subtitle_font = _load_pdf_font(size=20)
+    section_font = _load_pdf_font(size=24, bold=True)
+    body_font = _load_pdf_font(size=18)
+    small_font = _load_pdf_font(size=16)
+
+    images: list[Image.Image] = []
+    image = Image.new("RGB", (page_width, page_height), color="white")
+    draw = ImageDraw.Draw(image)
+    cursor_y = margin
+
+    def start_new_page() -> None:
+        nonlocal image, draw, cursor_y
+        images.append(image)
+        image = Image.new("RGB", (page_width, page_height), color="white")
+        draw = ImageDraw.Draw(image)
+        cursor_y = margin
+
+    def ensure_space(height: int) -> None:
+        nonlocal cursor_y
+        if cursor_y + int(height) > page_height - margin:
+            start_new_page()
+
+    def render_wrapped_lines(lines: list[str], *, font: ImageFont.ImageFont, fill: str, line_spacing: int) -> None:
+        nonlocal cursor_y
+        max_width = page_width - margin * 2
+        for raw_line in lines:
+            wrapped_lines = _wrap_pdf_text(draw, raw_line, font=font, max_width=max_width)
+            for wrapped_line in wrapped_lines:
+                ensure_space(line_spacing)
+                draw.text((margin, cursor_y), wrapped_line, font=font, fill=fill)
+                cursor_y += line_spacing
+
+    draw.rounded_rectangle(
+        [(margin, margin), (page_width - margin, margin + 130)],
+        radius=24,
+        fill="#1f4f43",
+    )
+    cursor_y = margin + 18
+    draw.text((margin + 22, cursor_y), title, font=title_font, fill="#fffaf0")
+    cursor_y += 48
+    render_wrapped_lines(subtitle_lines, font=subtitle_font, fill="#f7efe1", line_spacing=28)
+    cursor_y = margin + 150
+
+    for section_title, section_lines in sections:
+        ensure_space(40)
+        draw.text((margin, cursor_y), section_title, font=section_font, fill="#0d6a57")
+        cursor_y += 36
+        render_wrapped_lines(section_lines or ["暂无内容。"], font=body_font, fill="#1f2421", line_spacing=26)
+        cursor_y += 14
+
+    footer_text = f"{APP_NAME} | v{APP_VERSION} | Generated at {_now_text()}"
+    ensure_space(28)
+    draw.text((margin, min(cursor_y, page_height - margin)), footer_text, font=small_font, fill="#6b716d")
+    images.append(image)
+
+    rgb_images = [img.convert("RGB") for img in images]
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    if len(rgb_images) == 1:
+        rgb_images[0].save(pdf_path, "PDF", resolution=150.0)
+    else:
+        rgb_images[0].save(
+            pdf_path,
+            "PDF",
+            save_all=True,
+            append_images=rgb_images[1:],
+            resolution=150.0,
+        )
+    return pdf_path
+
+
 def _create_html_summary_export(
     run_root: Path,
     summary: dict[str, Any] | None,
@@ -2136,6 +2325,120 @@ def _create_html_summary_export(
 """
     _write_text(html_path, html_text)
     return html_path
+
+
+def _create_pdf_summary_export(
+    run_root: Path,
+    summary: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
+    diagnostics: dict[str, Any] | None = None,
+) -> Path:
+    exports_dir = run_root / "exports"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = exports_dir / f"{run_root.name}_presentation_summary.pdf"
+
+    summary = summary if isinstance(summary, dict) else {}
+    metadata = metadata if isinstance(metadata, dict) else {}
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    comparison = summary.get("comparison") if isinstance(summary.get("comparison"), dict) else {}
+    baseline = comparison.get("baseline_rule_vs_ml") if isinstance(comparison.get("baseline_rule_vs_ml"), dict) else {}
+    calibrated = comparison.get("calibrated_rule_vs_ml") if isinstance(comparison.get("calibrated_rule_vs_ml"), dict) else {}
+    notes = summary.get("notes") if isinstance(summary.get("notes"), list) else []
+    out_dir = _get_out_dir(summary, metadata)
+
+    ml_ranking_path = Path(str(artifacts.get("ml_ranking_csv"))) if artifacts.get("ml_ranking_csv") else None
+    rule_ranking_path = Path(str(artifacts.get("rule_ranking_csv"))) if artifacts.get("rule_ranking_csv") else None
+    report_path = Path(str(artifacts.get("execution_report_md"))) if artifacts.get("execution_report_md") else None
+    ml_df = _load_csv(ml_ranking_path) if ml_ranking_path is not None and ml_ranking_path.exists() else None
+    rule_df = _load_csv(rule_ranking_path) if rule_ranking_path is not None and rule_ranking_path.exists() else None
+    report_text = _read_text(report_path) if report_path is not None and report_path.exists() else ""
+
+    training_payload = _load_training_summary_payload(summary, metadata)
+    training_summary = training_payload.get("summary") if isinstance(training_payload, dict) and isinstance(training_payload.get("summary"), dict) else {}
+    pseudo_block = training_payload.get("pseudo") if isinstance(training_payload, dict) and isinstance(training_payload.get("pseudo"), dict) else {}
+    pseudo_distribution = pseudo_block.get("distribution") if isinstance(pseudo_block.get("distribution"), dict) else {}
+    qc_payload = _load_feature_qc_payload(summary, metadata)
+    processing_summary = qc_payload.get("processing_summary") if isinstance(qc_payload, dict) and isinstance(qc_payload.get("processing_summary"), dict) else {}
+
+    subtitle_lines = [
+        f"运行名: {run_root.name}",
+        f"版本: v{APP_VERSION}",
+        f"生成时间: {_now_text()}",
+    ]
+    sections: list[tuple[str, list[str]]] = [
+        (
+            "核心摘要",
+            [
+                f"Start Mode: {summary.get('start_mode', 'N/A')}",
+                f"Status: {metadata.get('status', 'N/A')}",
+                f"Execution Mode: {metadata.get('execution_mode', 'N/A')}",
+                f"Valid Labels: {summary.get('label_valid_count', 0)}",
+                f"Label Classes: {summary.get('label_class_count', 0)}",
+                f"Calibration Possible: {summary.get('calibration_possible', False)}",
+                f"Output Dir: {out_dir or 'N/A'}",
+            ],
+        ),
+        (
+            "规则 vs ML 对照",
+            [
+                f"Baseline Rank Spearman: {_metric_text(baseline.get('rank_spearman'))}",
+                f"Baseline Rule AUC: {_metric_text(baseline.get('rule_auc'))}",
+                f"Calibrated Rank Spearman: {_metric_text(calibrated.get('rank_spearman'))}",
+                f"Calibrated Rule AUC: {_metric_text(calibrated.get('rule_auc'))}",
+            ],
+        ),
+        (
+            "训练摘要",
+            [
+                f"Training Mode: {training_payload.get('mode', 'N/A') if isinstance(training_payload, dict) else 'N/A'}",
+                f"Train Rows: {training_payload.get('n_rows_train', training_summary.get('train_size', 'N/A')) if isinstance(training_payload, dict) else 'N/A'}",
+                f"Val Rows: {training_payload.get('n_rows_val', training_summary.get('val_size', 'N/A')) if isinstance(training_payload, dict) else 'N/A'}",
+                f"Feature Count: {training_payload.get('n_features', 'N/A') if isinstance(training_payload, dict) else 'N/A'}",
+                f"Best Epoch: {training_summary.get('best_epoch', 'N/A')}",
+                f"Best Val Loss: {_metric_text(training_summary.get('best_val_loss'))}",
+                f"Pseudo Positive Rate: {_metric_text(pseudo_block.get('pseudo_positive_rate', pseudo_distribution.get('pseudo_positive_rate')))}",
+            ],
+        ),
+        (
+            "Feature QC / Warning",
+            [
+                f"Total Rows: {processing_summary.get('total_rows', 'N/A')}",
+                f"OK Rows: {processing_summary.get('ok_rows', 'N/A')}",
+                f"Failed Rows: {processing_summary.get('failed_rows', 'N/A')}",
+                f"Rows With Warning: {processing_summary.get('rows_with_warning_message', 'N/A')}",
+            ],
+        ),
+    ]
+
+    if notes:
+        sections.append(("执行备注", [str(note) for note in notes]))
+
+    diag_messages = diagnostics.get("messages") if isinstance(diagnostics.get("messages"), list) else []
+    diag_suggestions = diagnostics.get("suggestions") if isinstance(diagnostics.get("suggestions"), list) else []
+    if diag_messages or diag_suggestions:
+        sections.append(
+            (
+                "诊断摘要",
+                [*(f"消息: {item}" for item in diag_messages), *(f"建议: {item}" for item in diag_suggestions)],
+            )
+        )
+
+    sections.append(("ML 排名预览", _df_to_pdf_lines(ml_df, max_rows=10, max_cols=6)))
+    sections.append(("Rule 排名预览", _df_to_pdf_lines(rule_df, max_rows=10, max_cols=6)))
+
+    report_lines = report_text.splitlines()[:60] if report_text else ["当前没有 execution report。"]
+    if report_text and len(report_text.splitlines()) > 60:
+        report_lines.append(f"... 省略 {len(report_text.splitlines()) - 60} 行")
+    sections.append(("执行报告 Markdown 摘要", report_lines))
+
+    return _build_pdf_document(
+        pdf_path,
+        title=f"{APP_NAME} 自动化 PDF 摘要",
+        subtitle_lines=subtitle_lines,
+        sections=sections,
+    )
 
 
 def _build_output_inventory(
@@ -2889,6 +3192,62 @@ def _create_history_compare_html_export(
     return html_path
 
 
+def _create_history_compare_pdf_export(
+    selected_records: list[dict[str, Any]],
+    compare_df: pd.DataFrame,
+    *,
+    metric_key: str,
+    metric_label: str,
+    higher_is_better: bool,
+    leader_name: str | None,
+    leader_value: float | None,
+    baseline_run_name: str,
+    insight_lines: list[str],
+    delta_df: pd.DataFrame | None = None,
+    trend_df: pd.DataFrame | None = None,
+) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    export_dir = COMPARE_EXPORT_ROOT / stamp
+    export_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = export_dir / "history_compare_summary.pdf"
+
+    selected_lines = [
+        f"{item.get('run_name', 'N/A')} | {item.get('status', 'N/A')} | {item.get('started_at', 'N/A')}"
+        for item in selected_records
+    ]
+    subtitle_lines = [
+        f"基准运行: {baseline_run_name}",
+        f"主指标: {metric_label} ({'越高越好' if higher_is_better else '越低越好'})",
+        f"生成时间: {_now_text()}",
+    ]
+    sections: list[tuple[str, list[str]]] = [
+        (
+            "对比摘要",
+            [
+                f"Compared Runs: {len(compare_df)}",
+                f"Baseline Run: {baseline_run_name}",
+                f"Leader Run: {leader_name or 'N/A'}",
+                f"Leader Value: {_metric_text(leader_value)}",
+                f"Primary Metric Key: {metric_key}",
+            ],
+        ),
+        ("选中的运行", selected_lines or ["当前没有选中运行。"]),
+        ("Run-to-Run 差异解释", insight_lines or ["当前没有可用的差异解释。"]),
+        ("趋势快照", _df_to_pdf_lines(trend_df, max_rows=max(20, len(trend_df) if isinstance(trend_df, pd.DataFrame) else 20), max_cols=6)),
+        ("相对基准的差异表", _df_to_pdf_lines(delta_df, max_rows=max(20, len(delta_df) if isinstance(delta_df, pd.DataFrame) else 20), max_cols=10)),
+        ("完整对比表", _df_to_pdf_lines(compare_df, max_rows=max(20, len(compare_df)), max_cols=10)),
+    ]
+
+    csv_path = export_dir / "history_compare_table.csv"
+    csv_path.write_text(compare_df.to_csv(index=False), encoding="utf-8")
+    return _build_pdf_document(
+        pdf_path,
+        title=f"{APP_NAME} 多运行对比自动化 PDF",
+        subtitle_lines=subtitle_lines,
+        sections=sections,
+    )
+
+
 def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None:
     if not history_records:
         st.info("当前还没有历史运行记录，暂时无法做多运行对比。")
@@ -3047,11 +3406,16 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         available_delta_columns = [column for column in preferred_delta_columns if column in delta_df.columns]
         st.dataframe(delta_df.loc[:, available_delta_columns], use_container_width=True, hide_index=True)
 
-    export_col1, export_col2 = st.columns(2)
+    export_col1, export_col2, export_col3 = st.columns(3)
     create_compare_html_clicked = export_col1.button(
         "生成当前对比 HTML",
         use_container_width=True,
         key="create_compare_html_clicked",
+    )
+    create_compare_pdf_clicked = export_col2.button(
+        "生成当前对比 PDF",
+        use_container_width=True,
+        key="create_compare_pdf_clicked",
     )
     if create_compare_html_clicked:
         with st.spinner("正在生成多运行对比 HTML..."):
@@ -3070,9 +3434,28 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             )
         st.session_state["last_compare_export_html"] = str(html_path)
         st.session_state["last_compare_export_html_message"] = f"已生成多运行对比 HTML: {html_path}"
+    if create_compare_pdf_clicked:
+        with st.spinner("正在生成多运行对比 PDF..."):
+            pdf_path = _create_history_compare_pdf_export(
+                selected_records,
+                compare_df,
+                metric_key=metric_key,
+                metric_label=metric_labels.get(metric_key, metric_key),
+                higher_is_better=higher_is_better,
+                leader_name=leader_name,
+                leader_value=leader_value,
+                baseline_run_name=baseline_run_name,
+                insight_lines=insight_lines,
+                delta_df=delta_df,
+                trend_df=trend_df,
+            )
+        st.session_state["last_compare_export_pdf"] = str(pdf_path)
+        st.session_state["last_compare_export_pdf_message"] = f"已生成多运行对比 PDF: {pdf_path}"
 
     last_compare_export_html = st.session_state.get("last_compare_export_html")
     last_compare_export_html_message = str(st.session_state.get("last_compare_export_html_message") or "")
+    last_compare_export_pdf = st.session_state.get("last_compare_export_pdf")
+    last_compare_export_pdf_message = str(st.session_state.get("last_compare_export_pdf_message") or "")
     if last_compare_export_html_message:
         st.success(last_compare_export_html_message)
     if last_compare_export_html and Path(str(last_compare_export_html)).exists():
@@ -3085,8 +3468,27 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             mime="text/html",
             use_container_width=True,
         )
-        if export_col2.button("打开当前对比 HTML", use_container_width=True, key="open_compare_html_clicked"):
+        if export_col3.button("打开当前对比 HTML", use_container_width=True, key="open_compare_html_clicked"):
             ok, message = _open_local_path(compare_html_path)
+            if ok:
+                st.success(message)
+            else:
+                st.error(message)
+    if last_compare_export_pdf_message:
+        st.success(last_compare_export_pdf_message)
+    if last_compare_export_pdf and Path(str(last_compare_export_pdf)).exists():
+        compare_pdf_path = Path(str(last_compare_export_pdf))
+        st.caption(f"当前多运行对比 PDF: {compare_pdf_path}")
+        pdf_download_col1, pdf_download_col2 = st.columns(2)
+        pdf_download_col1.download_button(
+            label="下载当前对比 PDF",
+            data=compare_pdf_path.read_bytes(),
+            file_name=compare_pdf_path.name,
+            mime="application/pdf",
+            use_container_width=True,
+        )
+        if pdf_download_col2.button("打开当前对比 PDF", use_container_width=True, key="open_compare_pdf_clicked"):
+            ok, message = _open_local_path(compare_pdf_path)
             if ok:
                 st.success(message)
             else:
@@ -3217,6 +3619,8 @@ def _set_last_run_state(
     st.session_state["last_export_message"] = ""
     st.session_state["last_export_html"] = None
     st.session_state["last_export_html_message"] = ""
+    st.session_state["last_export_pdf"] = None
+    st.session_state["last_export_pdf_message"] = ""
 
 
 def _load_history_run(run_root: Path) -> None:
@@ -3308,8 +3712,12 @@ def _initialize_state() -> None:
     st.session_state.setdefault("last_export_message", "")
     st.session_state.setdefault("last_export_html", None)
     st.session_state.setdefault("last_export_html_message", "")
+    st.session_state.setdefault("last_export_pdf", None)
+    st.session_state.setdefault("last_export_pdf_message", "")
     st.session_state.setdefault("last_compare_export_html", None)
     st.session_state.setdefault("last_compare_export_html_message", "")
+    st.session_state.setdefault("last_compare_export_pdf", None)
+    st.session_state.setdefault("last_compare_export_pdf_message", "")
     st.session_state.setdefault("last_bundle_import", None)
     st.session_state.setdefault("last_bundle_import_message", "")
     st.session_state.setdefault("last_preflight", None)
@@ -3762,6 +4170,8 @@ def main() -> None:
     last_export_message = str(st.session_state.get("last_export_message") or "")
     last_export_html = st.session_state.get("last_export_html")
     last_export_html_message = str(st.session_state.get("last_export_html_message") or "")
+    last_export_pdf = st.session_state.get("last_export_pdf")
+    last_export_pdf_message = str(st.session_state.get("last_export_pdf_message") or "")
     output_dir = _get_out_dir(summary if isinstance(summary, dict) else None, metadata if isinstance(metadata, dict) else None)
 
     if last_run_dir:
@@ -3834,7 +4244,7 @@ def main() -> None:
             st.dataframe(inventory_df, use_container_width=True, hide_index=True)
 
         st.subheader("结果汇总打包")
-        bundle_col1, bundle_col2, bundle_col3 = st.columns(3)
+        bundle_col1, bundle_col2, bundle_col3, bundle_col4 = st.columns(4)
         create_bundle_clicked = bundle_col1.button(
             "生成当前运行汇总包",
             use_container_width=True,
@@ -3845,7 +4255,12 @@ def main() -> None:
             use_container_width=True,
             disabled=not bool(last_run_dir),
         )
-        open_bundle_dir_clicked = bundle_col3.button(
+        create_pdf_clicked = bundle_col3.button(
+            "生成展示摘要 PDF",
+            use_container_width=True,
+            disabled=not bool(last_run_dir),
+        )
+        open_bundle_dir_clicked = bundle_col4.button(
             "打开汇总包目录",
             use_container_width=True,
             disabled=not bool(last_run_dir),
@@ -3884,6 +4299,26 @@ def main() -> None:
                 st.session_state["last_export_html_message"] = f"已生成展示摘要 HTML: {html_path}"
                 last_export_html = str(html_path)
                 last_export_html_message = str(st.session_state["last_export_html_message"])
+
+        if create_pdf_clicked:
+            if not last_run_dir:
+                st.warning("当前还没有可导出的运行记录。")
+            else:
+                pdf_run_root = Path(str(last_run_dir))
+                pdf_summary = summary if isinstance(summary, dict) else None
+                pdf_metadata = metadata if isinstance(metadata, dict) else None
+                pdf_diagnostics = diagnostics if isinstance(diagnostics, dict) else None
+                with st.spinner("正在生成展示摘要 PDF..."):
+                    pdf_path = _create_pdf_summary_export(
+                        pdf_run_root,
+                        pdf_summary,
+                        pdf_metadata,
+                        pdf_diagnostics,
+                    )
+                st.session_state["last_export_pdf"] = str(pdf_path)
+                st.session_state["last_export_pdf_message"] = f"已生成展示摘要 PDF: {pdf_path}"
+                last_export_pdf = str(pdf_path)
+                last_export_pdf_message = str(st.session_state["last_export_pdf_message"])
 
         if open_bundle_dir_clicked:
             if not last_run_dir:
@@ -3925,6 +4360,25 @@ def main() -> None:
             )
             if html_download_col2.button("打开展示摘要 HTML", use_container_width=True):
                 ok, message = _open_local_path(html_path)
+                if ok:
+                    st.success(message)
+                else:
+                    st.error(message)
+        if last_export_pdf_message:
+            st.success(last_export_pdf_message)
+        if last_export_pdf and Path(str(last_export_pdf)).exists():
+            pdf_path = Path(str(last_export_pdf))
+            st.caption(f"当前展示摘要 PDF: {pdf_path}")
+            pdf_download_col1, pdf_download_col2 = st.columns(2)
+            pdf_download_col1.download_button(
+                label="下载展示摘要 PDF",
+                data=pdf_path.read_bytes(),
+                file_name=pdf_path.name,
+                mime="application/pdf",
+                use_container_width=True,
+            )
+            if pdf_download_col2.button("打开展示摘要 PDF", use_container_width=True):
+                ok, message = _open_local_path(pdf_path)
                 if ok:
                     st.success(message)
                 else:
