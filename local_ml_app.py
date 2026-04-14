@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -1650,6 +1651,14 @@ def _collect_export_bundle_members(
             Path(run_root.name) / "artifacts" / artifact_path.name,
         )
 
+    exports_dir = run_root / "exports"
+    if exports_dir.exists():
+        for file_path in sorted(exports_dir.glob("*.html")):
+            add_file(
+                file_path,
+                Path(run_root.name) / "exports" / file_path.name,
+            )
+
     return members, notes
 
 
@@ -1689,6 +1698,333 @@ def _create_export_bundle(
         )
 
     return bundle_path
+
+
+def _metric_text(value: Any) -> str:
+    try:
+        return f"{float(value):.4f}"
+    except (TypeError, ValueError):
+        if value is None:
+            return "N/A"
+        text = str(value).strip()
+        return text or "N/A"
+
+
+def _df_to_html_table(df: pd.DataFrame | None, *, max_rows: int = 20) -> str:
+    if df is None or df.empty:
+        return '<p class="muted">暂无可展示内容。</p>'
+    view = df.head(int(max_rows)).copy()
+    return view.to_html(index=False, escape=True, border=0, classes="data-table")
+
+
+def _build_metric_cards_html(cards: list[tuple[str, Any]]) -> str:
+    items: list[str] = []
+    for label, value in cards:
+        items.append(
+            "<div class='metric-card'>"
+            f"<div class='metric-label'>{html.escape(str(label))}</div>"
+            f"<div class='metric-value'>{html.escape(_metric_text(value))}</div>"
+            "</div>"
+        )
+    return "".join(items)
+
+
+def _create_html_summary_export(
+    run_root: Path,
+    summary: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
+    diagnostics: dict[str, Any] | None = None,
+) -> Path:
+    exports_dir = run_root / "exports"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    html_path = exports_dir / f"{run_root.name}_presentation_summary.html"
+
+    summary = summary if isinstance(summary, dict) else {}
+    metadata = metadata if isinstance(metadata, dict) else {}
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    notes = summary.get("notes") if isinstance(summary.get("notes"), list) else []
+    out_dir = _get_out_dir(summary, metadata)
+    out_dir_text = "" if out_dir is None else str(out_dir)
+
+    ml_ranking_path = Path(str(artifacts.get("ml_ranking_csv"))) if artifacts.get("ml_ranking_csv") else None
+    rule_ranking_path = Path(str(artifacts.get("rule_ranking_csv"))) if artifacts.get("rule_ranking_csv") else None
+    report_path = Path(str(artifacts.get("execution_report_md"))) if artifacts.get("execution_report_md") else None
+    training_summary_path = _resolve_output_file(
+        "model_outputs",
+        "training_summary.json",
+        summary=summary,
+        metadata=metadata,
+    )
+
+    ml_df = _load_csv(ml_ranking_path) if ml_ranking_path is not None and ml_ranking_path.exists() else None
+    rule_df = _load_csv(rule_ranking_path) if rule_ranking_path is not None and rule_ranking_path.exists() else None
+    training_payload = _load_json(training_summary_path) if training_summary_path is not None and training_summary_path.exists() else None
+    report_text = _read_text(report_path) if report_path is not None and report_path.exists() else ""
+    inventory_df = _build_output_inventory(summary, metadata)
+
+    comparison = summary.get("comparison") if isinstance(summary.get("comparison"), dict) else {}
+    baseline = comparison.get("baseline_rule_vs_ml") if isinstance(comparison.get("baseline_rule_vs_ml"), dict) else {}
+    calibrated = comparison.get("calibrated_rule_vs_ml") if isinstance(comparison.get("calibrated_rule_vs_ml"), dict) else {}
+
+    header_cards = _build_metric_cards_html(
+        [
+            ("Start Mode", summary.get("start_mode")),
+            ("Valid Labels", summary.get("label_valid_count")),
+            ("Label Classes", summary.get("label_class_count")),
+            ("Calibration", "Yes" if bool(summary.get("calibration_possible", False)) else "No"),
+            ("Status", metadata.get("status") or "N/A"),
+            ("Execution Mode", metadata.get("execution_mode") or "N/A"),
+        ]
+    )
+    comparison_cards = _build_metric_cards_html(
+        [
+            ("Baseline Rank Spearman", baseline.get("rank_spearman")),
+            ("Baseline Rule AUC", baseline.get("rule_auc")),
+            ("Calibrated Rank Spearman", calibrated.get("rank_spearman")),
+            ("Calibrated Rule AUC", calibrated.get("rule_auc")),
+        ]
+    )
+
+    training_cards = ""
+    if isinstance(training_payload, dict):
+        training_cards = _build_metric_cards_html(
+            [
+                ("Train Rows", training_payload.get("train_rows")),
+                ("Val Rows", training_payload.get("val_rows")),
+                ("Best Epoch", training_payload.get("best_epoch")),
+                ("Best Val Loss", training_payload.get("best_val_loss")),
+                ("Feature Count", training_payload.get("feature_count")),
+                ("Pseudo Positive Rate", training_payload.get("pseudo_positive_rate")),
+            ]
+        )
+
+    notes_html = "".join(f"<li>{html.escape(str(note))}</li>" for note in notes)
+    diag_messages = diagnostics.get("messages") if isinstance(diagnostics.get("messages"), list) else []
+    diag_suggestions = diagnostics.get("suggestions") if isinstance(diagnostics.get("suggestions"), list) else []
+    diag_messages_html = "".join(f"<li>{html.escape(str(item))}</li>" for item in diag_messages)
+    diag_suggestions_html = "".join(f"<li>{html.escape(str(item))}</li>" for item in diag_suggestions)
+
+    html_text = f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{html.escape(APP_NAME)} | {html.escape(run_root.name)} | v{html.escape(APP_VERSION)}</title>
+  <style>
+    :root {{
+      --bg: #f4f1ea;
+      --card: #fffdf8;
+      --line: #d8cfbf;
+      --ink: #1f2421;
+      --muted: #6b716d;
+      --accent: #0d6a57;
+      --accent-soft: #dcefe8;
+      --warn: #9a6700;
+      --bad: #9a2f2f;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(180deg, #efe9da 0%, var(--bg) 52%, #ffffff 100%);
+      color: var(--ink);
+      line-height: 1.55;
+    }}
+    .page {{
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 28px 20px 56px;
+    }}
+    .hero {{
+      background: linear-gradient(135deg, #153d35 0%, #21574a 50%, #e3d3aa 100%);
+      color: #fffaf0;
+      padding: 24px 26px;
+      border-radius: 20px;
+      box-shadow: 0 18px 60px rgba(22, 45, 38, 0.18);
+    }}
+    .hero h1 {{
+      margin: 0 0 8px;
+      font-size: 30px;
+      letter-spacing: 0.2px;
+    }}
+    .hero p {{
+      margin: 0;
+      color: rgba(255, 250, 240, 0.88);
+    }}
+    .section {{
+      margin-top: 18px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px 20px 18px;
+      box-shadow: 0 10px 28px rgba(28, 38, 33, 0.05);
+    }}
+    .section h2 {{
+      margin: 0 0 14px;
+      font-size: 18px;
+    }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }}
+    .metric-card {{
+      background: #fff;
+      border: 1px solid #e7ded0;
+      border-radius: 14px;
+      padding: 14px 14px 12px;
+    }}
+    .metric-label {{
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }}
+    .metric-value {{
+      font-size: 24px;
+      font-weight: 700;
+    }}
+    .meta {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px 16px;
+    }}
+    .meta-item {{
+      padding: 10px 12px;
+      background: #faf7f0;
+      border-radius: 12px;
+      border: 1px solid #ece3d5;
+    }}
+    .meta-label {{
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }}
+    .meta-value {{
+      word-break: break-word;
+      white-space: pre-wrap;
+    }}
+    .data-table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      overflow: hidden;
+    }}
+    .data-table th, .data-table td {{
+      border: 1px solid #e6ddcf;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }}
+    .data-table th {{
+      background: #f4efe5;
+    }}
+    pre {{
+      background: #15211e;
+      color: #f6f2e8;
+      padding: 14px;
+      border-radius: 14px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+    }}
+    ul {{
+      margin: 10px 0 0 18px;
+      padding: 0;
+    }}
+    .muted {{
+      color: var(--muted);
+    }}
+    .footer {{
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }}
+    @media print {{
+      body {{ background: #fff; }}
+      .page {{ max-width: none; padding: 0; }}
+      .hero, .section {{ box-shadow: none; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <h1>{html.escape(APP_NAME)} 展示摘要</h1>
+      <p>运行名: {html.escape(run_root.name)} | 版本: v{html.escape(APP_VERSION)} | 生成时间: {html.escape(_now_text())}</p>
+    </section>
+
+    <section class="section">
+      <h2>核心摘要</h2>
+      <div class="grid">{header_cards}</div>
+    </section>
+
+    <section class="section">
+      <h2>运行信息</h2>
+      <div class="meta">
+        <div class="meta-item"><div class="meta-label">输出目录</div><div class="meta-value">{html.escape(out_dir_text or "N/A")}</div></div>
+        <div class="meta-item"><div class="meta-label">最近命令</div><div class="meta-value">{html.escape(" ".join(metadata.get("command", [])) if isinstance(metadata.get("command"), list) else "")}</div></div>
+        <div class="meta-item"><div class="meta-label">开始时间</div><div class="meta-value">{html.escape(str(metadata.get("started_at") or metadata.get("created_at") or "N/A"))}</div></div>
+        <div class="meta-item"><div class="meta-label">结束时间</div><div class="meta-value">{html.escape(str(metadata.get("finished_at") or "N/A"))}</div></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>规则 vs ML 对照</h2>
+      <div class="grid">{comparison_cards}</div>
+    </section>
+
+    <section class="section">
+      <h2>训练摘要</h2>
+      {"<div class='grid'>" + training_cards + "</div>" if training_cards else "<p class='muted'>当前没有 training_summary.json。</p>"}
+    </section>
+
+    <section class="section">
+      <h2>执行备注</h2>
+      {"<ul>" + notes_html + "</ul>" if notes_html else "<p class='muted'>当前没有执行备注。</p>"}
+    </section>
+
+    <section class="section">
+      <h2>ML 排名预览</h2>
+      {_df_to_html_table(ml_df, max_rows=10)}
+    </section>
+
+    <section class="section">
+      <h2>Rule 排名预览</h2>
+      {_df_to_html_table(rule_df, max_rows=10)}
+    </section>
+
+    <section class="section">
+      <h2>运行产物清单</h2>
+      {_df_to_html_table(inventory_df, max_rows=50)}
+    </section>
+
+    <section class="section">
+      <h2>诊断摘要</h2>
+      {"<ul>" + diag_messages_html + "</ul>" if diag_messages_html else "<p class='muted'>当前没有诊断消息。</p>"}
+      {"<h3>建议</h3><ul>" + diag_suggestions_html + "</ul>" if diag_suggestions_html else ""}
+    </section>
+
+    <section class="section">
+      <h2>执行报告 Markdown</h2>
+      <pre>{html.escape(report_text or "当前没有 execution report。")}</pre>
+    </section>
+
+    <div class="footer">
+      该 HTML 为本地软件自动生成，可直接下载、发送或用浏览器打印为 PDF。
+    </div>
+  </div>
+</body>
+</html>
+"""
+    _write_text(html_path, html_text)
+    return html_path
 
 
 def _build_output_inventory(
@@ -2044,6 +2380,8 @@ def _set_last_run_state(
     st.session_state["last_error"] = error_text
     st.session_state["last_export_bundle"] = None
     st.session_state["last_export_message"] = ""
+    st.session_state["last_export_html"] = None
+    st.session_state["last_export_html_message"] = ""
 
 
 def _load_history_run(run_root: Path) -> None:
@@ -2133,6 +2471,8 @@ def _initialize_state() -> None:
     st.session_state.setdefault("last_error", "")
     st.session_state.setdefault("last_export_bundle", None)
     st.session_state.setdefault("last_export_message", "")
+    st.session_state.setdefault("last_export_html", None)
+    st.session_state.setdefault("last_export_html_message", "")
     st.session_state.setdefault("last_bundle_import", None)
     st.session_state.setdefault("last_bundle_import_message", "")
     st.session_state.setdefault("last_preflight", None)
@@ -2583,6 +2923,8 @@ def main() -> None:
     last_error = str(st.session_state.get("last_error") or "")
     last_export_bundle = st.session_state.get("last_export_bundle")
     last_export_message = str(st.session_state.get("last_export_message") or "")
+    last_export_html = st.session_state.get("last_export_html")
+    last_export_html_message = str(st.session_state.get("last_export_html_message") or "")
     output_dir = _get_out_dir(summary if isinstance(summary, dict) else None, metadata if isinstance(metadata, dict) else None)
 
     if last_run_dir:
@@ -2638,13 +2980,18 @@ def main() -> None:
             st.dataframe(inventory_df, use_container_width=True, hide_index=True)
 
         st.subheader("结果汇总打包")
-        bundle_col1, bundle_col2 = st.columns(2)
+        bundle_col1, bundle_col2, bundle_col3 = st.columns(3)
         create_bundle_clicked = bundle_col1.button(
             "生成当前运行汇总包",
             use_container_width=True,
             disabled=not bool(last_run_dir),
         )
-        open_bundle_dir_clicked = bundle_col2.button(
+        create_html_clicked = bundle_col2.button(
+            "生成展示摘要 HTML",
+            use_container_width=True,
+            disabled=not bool(last_run_dir),
+        )
+        open_bundle_dir_clicked = bundle_col3.button(
             "打开汇总包目录",
             use_container_width=True,
             disabled=not bool(last_run_dir),
@@ -2663,6 +3010,26 @@ def main() -> None:
                 st.session_state["last_export_message"] = f"已生成汇总包: {bundle_path}"
                 last_export_bundle = str(bundle_path)
                 last_export_message = str(st.session_state["last_export_message"])
+
+        if create_html_clicked:
+            if not last_run_dir:
+                st.warning("当前还没有可导出的运行记录。")
+            else:
+                html_run_root = Path(str(last_run_dir))
+                html_summary = summary if isinstance(summary, dict) else None
+                html_metadata = metadata if isinstance(metadata, dict) else None
+                html_diagnostics = diagnostics if isinstance(diagnostics, dict) else None
+                with st.spinner("正在生成展示摘要 HTML..."):
+                    html_path = _create_html_summary_export(
+                        html_run_root,
+                        html_summary,
+                        html_metadata,
+                        html_diagnostics,
+                    )
+                st.session_state["last_export_html"] = str(html_path)
+                st.session_state["last_export_html_message"] = f"已生成展示摘要 HTML: {html_path}"
+                last_export_html = str(html_path)
+                last_export_html_message = str(st.session_state["last_export_html_message"])
 
         if open_bundle_dir_clicked:
             if not last_run_dir:
@@ -2688,6 +3055,26 @@ def main() -> None:
                 mime="application/zip",
                 use_container_width=True,
             )
+
+        if last_export_html_message:
+            st.success(last_export_html_message)
+        if last_export_html and Path(str(last_export_html)).exists():
+            html_path = Path(str(last_export_html))
+            st.caption(f"当前展示摘要 HTML: {html_path}")
+            html_download_col1, html_download_col2 = st.columns(2)
+            html_download_col1.download_button(
+                label="下载展示摘要 HTML",
+                data=html_path.read_bytes(),
+                file_name=html_path.name,
+                mime="text/html",
+                use_container_width=True,
+            )
+            if html_download_col2.button("打开展示摘要 HTML", use_container_width=True):
+                ok, message = _open_local_path(html_path)
+                if ok:
+                    st.success(message)
+                else:
+                    st.error(message)
 
         st.subheader("关键产物下载")
         _render_download_buttons(
