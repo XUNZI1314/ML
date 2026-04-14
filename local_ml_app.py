@@ -36,6 +36,12 @@ START_MODE_LABELS = {
     "feature_csv": "从 pose_features.csv 开始",
 }
 
+LOWER_IS_BETTER_COMPARE_METRICS = {
+    "best_val_loss",
+    "failed_rows",
+    "warning_rows",
+}
+
 KNOWN_STAGE_SUGGESTIONS = {
     "build_feature_table": "优先检查 input_csv 中的 pdb_path、pocket_file、catalytic_file、ligand_file 是否存在且可访问。",
     "rule_ranker": "先打开 pose_features.csv，确认关键特征列是否存在且不是全空。",
@@ -2590,6 +2596,174 @@ def _pick_compare_leader(
     return best_run_name, best_value
 
 
+def _is_higher_better_compare_metric(metric_key: str) -> bool:
+    return metric_key not in LOWER_IS_BETTER_COMPARE_METRICS
+
+
+def _sort_compare_df_for_trend(compare_df: pd.DataFrame) -> pd.DataFrame:
+    ordered = compare_df.copy()
+    ordered["_started_at_dt"] = pd.to_datetime(ordered.get("started_at"), errors="coerce")
+    ordered["_original_order"] = list(range(len(ordered)))
+    ordered = ordered.sort_values(
+        by=["_started_at_dt", "_original_order"],
+        ascending=[True, True],
+        na_position="last",
+    ).reset_index(drop=True)
+    return ordered
+
+
+def _build_compare_delta_table(
+    compare_df: pd.DataFrame,
+    *,
+    baseline_run_name: str,
+    metric_key: str,
+) -> pd.DataFrame:
+    if compare_df.empty:
+        return pd.DataFrame()
+    baseline_rows = compare_df[compare_df["run_name"].astype(str) == str(baseline_run_name)]
+    if baseline_rows.empty:
+        return pd.DataFrame()
+
+    baseline_row = baseline_rows.iloc[0].to_dict()
+    primary_higher_is_better = _is_higher_better_compare_metric(metric_key)
+    tracked_metrics = [
+        metric_key,
+        "baseline_rank_spearman",
+        "calibrated_rank_spearman",
+        "baseline_rule_auc",
+        "calibrated_rule_auc",
+        "best_val_loss",
+        "failed_rows",
+        "warning_rows",
+    ]
+
+    rows: list[dict[str, Any]] = []
+    for row in compare_df.to_dict(orient="records"):
+        item = {
+            "run_name": row.get("run_name"),
+            "status": row.get("status"),
+            "started_at": row.get("started_at"),
+            "baseline_run": baseline_run_name,
+            "primary_metric_key": metric_key,
+            "primary_metric_value": row.get(metric_key),
+            metric_key: row.get(metric_key),
+        }
+
+        current_primary = _coerce_float(row.get(metric_key))
+        baseline_primary = _coerce_float(baseline_row.get(metric_key))
+        if current_primary is not None and baseline_primary is not None:
+            raw_delta = current_primary - baseline_primary
+            item["primary_metric_delta"] = raw_delta
+            item["primary_metric_improvement"] = raw_delta if primary_higher_is_better else -raw_delta
+        else:
+            item["primary_metric_delta"] = None
+            item["primary_metric_improvement"] = None
+
+        for tracked_metric in tracked_metrics:
+            if tracked_metric == metric_key or tracked_metric not in compare_df.columns:
+                continue
+            current_value = _coerce_float(row.get(tracked_metric))
+            baseline_value = _coerce_float(baseline_row.get(tracked_metric))
+            item[tracked_metric] = row.get(tracked_metric)
+            item[f"{tracked_metric}_delta"] = (
+                None if current_value is None or baseline_value is None else current_value - baseline_value
+            )
+
+        rows.append(item)
+
+    return pd.DataFrame(rows)
+
+
+def _build_compare_insight_lines(
+    compare_df: pd.DataFrame,
+    *,
+    baseline_run_name: str,
+    metric_key: str,
+    metric_label: str,
+) -> list[str]:
+    if compare_df.empty:
+        return []
+
+    delta_df = _build_compare_delta_table(
+        compare_df,
+        baseline_run_name=baseline_run_name,
+        metric_key=metric_key,
+    )
+    if delta_df.empty:
+        return []
+
+    insight_lines: list[str] = []
+    baseline_row = compare_df[compare_df["run_name"].astype(str) == str(baseline_run_name)].iloc[0].to_dict()
+    baseline_metric = _coerce_float(baseline_row.get(metric_key))
+    if baseline_metric is not None:
+        insight_lines.append(
+            f"当前基准运行是 {baseline_run_name}，其 {metric_label} = {_metric_text(baseline_metric)}。"
+        )
+    else:
+        insight_lines.append(f"当前基准运行是 {baseline_run_name}，但该运行没有可用的 {metric_label}。")
+
+    comparable_delta_df = delta_df[
+        delta_df["run_name"].astype(str) != str(baseline_run_name)
+    ].copy()
+    comparable_delta_df["primary_metric_improvement_num"] = pd.to_numeric(
+        comparable_delta_df.get("primary_metric_improvement"),
+        errors="coerce",
+    )
+
+    if not comparable_delta_df.empty and comparable_delta_df["primary_metric_improvement_num"].notna().any():
+        best_idx = comparable_delta_df["primary_metric_improvement_num"].idxmax()
+        worst_idx = comparable_delta_df["primary_metric_improvement_num"].idxmin()
+        best_row = comparable_delta_df.loc[best_idx]
+        worst_row = comparable_delta_df.loc[worst_idx]
+        best_delta = _coerce_float(best_row.get("primary_metric_improvement_num"))
+        worst_delta = _coerce_float(worst_row.get("primary_metric_improvement_num"))
+        if best_delta is not None and best_delta > 0:
+            insight_lines.append(
+                f"相对基准，提升最大的运行是 {best_row.get('run_name')}，"
+                f"{metric_label} 改善了 {_metric_text(best_delta)}。"
+            )
+        if worst_delta is not None and worst_delta < 0:
+            insight_lines.append(
+                f"相对基准，回退最明显的运行是 {worst_row.get('run_name')}，"
+                f"{metric_label} 退化了 {_metric_text(abs(worst_delta))}。"
+            )
+
+    baseline_failed = _coerce_float(baseline_row.get("failed_rows")) or 0.0
+    baseline_warning = _coerce_float(baseline_row.get("warning_rows")) or 0.0
+    failed_regressions = []
+    warning_regressions = []
+    for row in compare_df.to_dict(orient="records"):
+        run_name = str(row.get("run_name") or "")
+        if run_name == str(baseline_run_name):
+            continue
+        failed_value = _coerce_float(row.get("failed_rows")) or 0.0
+        warning_value = _coerce_float(row.get("warning_rows")) or 0.0
+        if failed_value > baseline_failed:
+            failed_regressions.append(f"{run_name}(+{int(failed_value - baseline_failed)})")
+        if warning_value > baseline_warning:
+            warning_regressions.append(f"{run_name}(+{int(warning_value - baseline_warning)})")
+
+    if failed_regressions:
+        insight_lines.append(
+            "相对基准，failed_rows 增加的运行有: " + ", ".join(failed_regressions[:6]) + "。"
+        )
+    if warning_regressions:
+        insight_lines.append(
+            "相对基准，warning_rows 增加的运行有: " + ", ".join(warning_regressions[:6]) + "。"
+        )
+
+    clean_mask = (
+        compare_df["status"].astype(str).str.lower().eq("success")
+        & pd.to_numeric(compare_df.get("failed_rows"), errors="coerce").fillna(0).eq(0)
+        & pd.to_numeric(compare_df.get("warning_rows"), errors="coerce").fillna(0).eq(0)
+    )
+    clean_runs = compare_df.loc[clean_mask, "run_name"].astype(str).tolist()
+    if clean_runs:
+        insight_lines.append("当前选中运行里的 clean run: " + ", ".join(clean_runs[:6]) + "。")
+
+    return insight_lines
+
+
 def _create_history_compare_html_export(
     selected_records: list[dict[str, Any]],
     compare_df: pd.DataFrame,
@@ -2599,6 +2773,10 @@ def _create_history_compare_html_export(
     higher_is_better: bool,
     leader_name: str | None,
     leader_value: float | None,
+    baseline_run_name: str,
+    insight_lines: list[str],
+    delta_df: pd.DataFrame | None = None,
+    trend_df: pd.DataFrame | None = None,
 ) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     export_dir = COMPARE_EXPORT_ROOT / stamp
@@ -2624,6 +2802,7 @@ def _create_history_compare_html_export(
             ("Success Runs", int(success_mask.sum())),
             ("Clean Runs", int(clean_mask.sum())),
             ("Primary Metric", metric_label),
+            ("Baseline Run", baseline_run_name),
             ("Leader Run", leader_name or "N/A"),
             ("Leader Value", leader_value),
         ]
@@ -2643,6 +2822,9 @@ def _create_history_compare_html_export(
             f"所有选中运行的 warning_rows 合计: {int(warning_rows_numeric.sum())}"
         )
     highlights_html = "".join(f"<li>{html.escape(line)}</li>" for line in highlight_lines)
+    insight_lines_html = "".join(f"<li>{html.escape(line)}</li>" for line in insight_lines)
+    delta_table_html = _df_to_html_table(delta_df, max_rows=max(20, len(delta_df) if isinstance(delta_df, pd.DataFrame) else 20))
+    trend_table_html = _df_to_html_table(trend_df, max_rows=max(20, len(trend_df) if isinstance(trend_df, pd.DataFrame) else 20))
 
     html_text = f"""<!doctype html>
 <html lang="zh-CN">
@@ -2672,6 +2854,21 @@ def _create_history_compare_html_export(
     <section class="section">
       <h2>重点观察</h2>
       <ul>{highlights_html}</ul>
+    </section>
+
+    <section class="section">
+      <h2>基准差异解释</h2>
+      {"<ul>" + insight_lines_html + "</ul>" if insight_lines_html else "<p class='muted'>当前没有可用的差异解释。</p>"}
+    </section>
+
+    <section class="section">
+      <h2>趋势快照</h2>
+      {trend_table_html}
+    </section>
+
+    <section class="section">
+      <h2>相对基准的差异表</h2>
+      {delta_table_html}
     </section>
 
     <section class="section">
@@ -2729,11 +2926,30 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         format_func=lambda key: metric_labels.get(key, key),
         key="history_compare_metric_key",
     )
-    higher_is_better = metric_key not in {"best_val_loss", "failed_rows", "warning_rows"}
+    higher_is_better = _is_higher_better_compare_metric(metric_key)
     leader_name, leader_value = _pick_compare_leader(
         compare_df,
         metric_key=metric_key,
         higher_is_better=higher_is_better,
+    )
+    ordered_compare_df = _sort_compare_df_for_trend(compare_df)
+    baseline_options = ordered_compare_df["run_name"].astype(str).tolist()
+    baseline_run_name = st.selectbox(
+        "基准运行",
+        options=baseline_options,
+        index=0,
+        key="history_compare_baseline_run",
+    )
+    delta_df = _build_compare_delta_table(
+        compare_df,
+        baseline_run_name=baseline_run_name,
+        metric_key=metric_key,
+    )
+    insight_lines = _build_compare_insight_lines(
+        compare_df,
+        baseline_run_name=baseline_run_name,
+        metric_key=metric_key,
+        metric_label=metric_labels.get(metric_key, metric_key),
     )
 
     failed_rows_numeric = pd.to_numeric(compare_df.get("failed_rows"), errors="coerce").fillna(0)
@@ -2749,11 +2965,13 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
     c4.metric("Leader Value", _fmt_metric(leader_value))
     st.caption(
         f"当前按 {metric_labels.get(metric_key, metric_key)} "
-        f"{'越高越好' if higher_is_better else '越低越好'} 比较；领先运行: {leader_name or 'N/A'}"
+        f"{'越高越好' if higher_is_better else '越低越好'} 比较；领先运行: {leader_name or 'N/A'}；"
+        f"当前基准运行: {baseline_run_name}"
     )
 
     chart_columns = []
     for column in [
+        metric_key,
         "baseline_rank_spearman",
         "calibrated_rank_spearman",
         "best_val_loss",
@@ -2771,6 +2989,64 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             chart_df[column] = pd.to_numeric(chart_df[column], errors="coerce")
         st.bar_chart(chart_df.set_index("run_name"), height=280)
 
+    trend_columns = []
+    for column in [metric_key, "best_val_loss", "failed_rows", "warning_rows"]:
+        if column not in ordered_compare_df.columns:
+            continue
+        series = pd.to_numeric(ordered_compare_df[column], errors="coerce")
+        if series.notna().any():
+            trend_columns.append(column)
+    trend_df = pd.DataFrame()
+    if trend_columns:
+        trend_df = ordered_compare_df.loc[:, ["started_at", "run_name"] + trend_columns].copy()
+        trend_df["timeline_label"] = (
+            trend_df["started_at"].astype(str).fillna("N/A")
+            + " | "
+            + trend_df["run_name"].astype(str).fillna("N/A")
+        )
+        chart_ready_df = trend_df.loc[:, ["timeline_label"] + trend_columns].copy()
+        for column in trend_columns:
+            chart_ready_df[column] = pd.to_numeric(chart_ready_df[column], errors="coerce")
+        st.subheader("多运行趋势")
+        st.line_chart(chart_ready_df.set_index("timeline_label"), height=260)
+        st.caption("趋势图按 started_at 从早到晚排序，方便看不同运行之间的连续变化。")
+
+    st.subheader("Run-to-Run 差异解释")
+    if insight_lines:
+        for line in insight_lines:
+            st.write(f"- {line}")
+    else:
+        st.info("当前选中的运行还不足以生成稳定的差异解释。")
+
+    if not delta_df.empty:
+        st.subheader("相对基准的差异表")
+        preferred_delta_columns = [
+            "run_name",
+            "status",
+            "started_at",
+            "baseline_run",
+            "primary_metric_key",
+            "primary_metric_value",
+            "primary_metric_delta",
+            "primary_metric_improvement",
+            "baseline_rank_spearman",
+            "baseline_rank_spearman_delta",
+            "calibrated_rank_spearman",
+            "calibrated_rank_spearman_delta",
+            "baseline_rule_auc",
+            "baseline_rule_auc_delta",
+            "calibrated_rule_auc",
+            "calibrated_rule_auc_delta",
+            "best_val_loss",
+            "best_val_loss_delta",
+            "failed_rows",
+            "failed_rows_delta",
+            "warning_rows",
+            "warning_rows_delta",
+        ]
+        available_delta_columns = [column for column in preferred_delta_columns if column in delta_df.columns]
+        st.dataframe(delta_df.loc[:, available_delta_columns], use_container_width=True, hide_index=True)
+
     export_col1, export_col2 = st.columns(2)
     create_compare_html_clicked = export_col1.button(
         "生成当前对比 HTML",
@@ -2787,6 +3063,10 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
                 higher_is_better=higher_is_better,
                 leader_name=leader_name,
                 leader_value=leader_value,
+                baseline_run_name=baseline_run_name,
+                insight_lines=insight_lines,
+                delta_df=delta_df,
+                trend_df=trend_df,
             )
         st.session_state["last_compare_export_html"] = str(html_path)
         st.session_state["last_compare_export_html_message"] = f"已生成多运行对比 HTML: {html_path}"
