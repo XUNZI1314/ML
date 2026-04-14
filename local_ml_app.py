@@ -70,6 +70,13 @@ FEATURE_CSV_OPTIONAL_HINT_COLUMNS = [
     "mouth_occlusion_score",
     "min_distance_to_pocket",
 ]
+BUNDLE_DETECTION_RULES: list[tuple[str, list[str], str | None, set[str] | None]] = [
+    ("input_csv_local_path", ["input_pose_table.csv"], "input", {".csv"}),
+    ("feature_csv_local_path", ["pose_features.csv"], "feature", {".csv"}),
+    ("default_pocket_local_path", [], "pocket", None),
+    ("default_catalytic_local_path", [], "catalytic", None),
+    ("default_ligand_local_path", [], "ligand", None),
+]
 BUNDLE_IMPORT_ROOT = LOCAL_APP_RUN_ROOT / "_bundle_imports"
 BUNDLE_IMPORT_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -637,6 +644,52 @@ def _choose_bundle_candidate(
     return candidates[0][-1]
 
 
+def _scan_input_bundle_root(
+    *,
+    bundle_root: Path,
+    source_name: str,
+    source_kind: str,
+    source_path: str,
+    import_root: Path | None = None,
+) -> dict[str, Any]:
+    bundle_root = bundle_root.expanduser().resolve()
+    if not bundle_root.exists():
+        raise FileNotFoundError(f"导入目录不存在: {bundle_root}")
+    if not bundle_root.is_dir():
+        raise NotADirectoryError(f"导入目录不是文件夹: {bundle_root}")
+
+    detected_paths: dict[str, str] = {}
+    for key, exact_names, contains_text, suffixes in BUNDLE_DETECTION_RULES:
+        detected_path = _choose_bundle_candidate(
+            bundle_root,
+            exact_names=exact_names,
+            contains_text=contains_text,
+            suffixes=suffixes,
+        )
+        if detected_path is not None:
+            detected_paths[key] = str(detected_path.resolve())
+
+    bundle_files = sorted([path for path in bundle_root.rglob("*") if path.is_file()])
+    preview_items = [
+        {"文件": str(path.relative_to(bundle_root))}
+        for path in bundle_files[:12]
+    ]
+    return {
+        "source_name": source_name,
+        "source_kind": source_kind,
+        "source_path": source_path,
+        "import_root": None if import_root is None else str(import_root.resolve()),
+        "bundle_root": str(bundle_root),
+        "file_count": len(bundle_files),
+        "detected_paths": detected_paths,
+        "detected_items": [
+            {"字段": key, "识别结果": value}
+            for key, value in detected_paths.items()
+        ],
+        "bundle_preview_items": preview_items,
+    }
+
+
 def _import_input_bundle(*, uploaded_file: Any, local_path_text: str) -> dict[str, Any]:
     local_path = str(local_path_text or "").strip()
     source_name = ""
@@ -670,43 +723,62 @@ def _import_input_bundle(*, uploaded_file: Any, local_path_text: str) -> dict[st
     except zipfile.BadZipFile as exc:
         raise ValueError(f"无效 zip 文件: {zip_path}") from exc
 
-    detected_paths: dict[str, str] = {}
-    detection_rules: list[tuple[str, list[str], str | None, set[str] | None]] = [
-        ("input_csv_local_path", ["input_pose_table.csv"], "input", {".csv"}),
-        ("feature_csv_local_path", ["pose_features.csv"], "feature", {".csv"}),
-        ("default_pocket_local_path", [], "pocket", None),
-        ("default_catalytic_local_path", [], "catalytic", None),
-        ("default_ligand_local_path", [], "ligand", None),
-    ]
-    for key, exact_names, contains_text, suffixes in detection_rules:
-        detected_path = _choose_bundle_candidate(
-            extracted_root,
-            exact_names=exact_names,
-            contains_text=contains_text,
-            suffixes=suffixes,
-        )
-        if detected_path is not None:
-            detected_paths[key] = str(detected_path.resolve())
+    report = _scan_input_bundle_root(
+        bundle_root=extracted_root,
+        source_name=source_name,
+        source_kind="zip",
+        source_path=str(zip_path),
+        import_root=import_root,
+    )
+    report["source_zip"] = str(zip_path)
+    report["extracted_root"] = str(extracted_root.resolve())
+    return report
 
-    extracted_files = [path for path in extracted_root.rglob("*") if path.is_file()]
-    return {
-        "source_name": source_name,
-        "source_zip": str(zip_path),
-        "import_root": str(import_root.resolve()),
-        "extracted_root": str(extracted_root.resolve()),
-        "file_count": len(extracted_files),
-        "detected_paths": detected_paths,
-        "detected_items": [
-            {"字段": key, "识别结果": value}
-            for key, value in detected_paths.items()
-        ],
-    }
+
+def _import_input_directory(local_dir_text: str) -> dict[str, Any]:
+    directory_path = Path(str(local_dir_text or "").strip()).expanduser().resolve()
+    if not directory_path.exists():
+        raise FileNotFoundError(f"数据目录不存在: {directory_path}")
+    if not directory_path.is_dir():
+        raise NotADirectoryError(f"数据目录不是文件夹: {directory_path}")
+
+    return _scan_input_bundle_root(
+        bundle_root=directory_path,
+        source_name=directory_path.name,
+        source_kind="directory",
+        source_path=str(directory_path),
+        import_root=None,
+    )
+
+
+def _import_bundle_source(
+    *,
+    uploaded_file: Any,
+    zip_local_path_text: str,
+    directory_local_path_text: str,
+) -> dict[str, Any]:
+    zip_local_path = str(zip_local_path_text or "").strip()
+    directory_local_path = str(directory_local_path_text or "").strip()
+
+    if directory_local_path and zip_local_path:
+        raise ValueError("zip 本地路径和目录路径请只填写一种。")
+
+    if directory_local_path:
+        return _import_input_directory(directory_local_path)
+    if zip_local_path:
+        return _import_input_bundle(uploaded_file=None, local_path_text=zip_local_path)
+    if uploaded_file is not None:
+        return _import_input_bundle(uploaded_file=uploaded_file, local_path_text="")
+
+    if uploaded_file is None:
+        raise ValueError("请先提供 zip 数据包，或填写本地数据目录路径。")
+    raise ValueError("无法识别当前导入来源。")
 
 
 def _apply_bundle_import(report: dict[str, Any]) -> str:
     detected_paths = report.get("detected_paths") if isinstance(report.get("detected_paths"), dict) else {}
     if not detected_paths:
-        return "已导入数据包，但没有自动识别到 input/feature/default 文件，请手动填写路径。"
+        return "已导入数据源，但没有自动识别到 input/feature/default 文件，请手动填写路径。"
 
     for key, value in detected_paths.items():
         if value:
@@ -725,8 +797,9 @@ def _apply_bundle_import(report: dict[str, Any]) -> str:
         "default_ligand_local_path": "default_ligand_file",
     }
     detected_names = [mapped_labels.get(key, key) for key in detected_paths]
+    source_kind_text = "目录" if str(report.get("source_kind") or "") == "directory" else "zip 数据包"
     return (
-        f"已导入数据包 {report.get('source_name', '')}，自动识别 {len(detected_paths)} 个输入项："
+        f"已导入{source_kind_text} {report.get('source_name', '')}，自动识别 {len(detected_paths)} 个输入项："
         + ", ".join(detected_names)
     )
 
@@ -985,7 +1058,7 @@ def _render_input_status_panel(
         st.caption("input_csv 必需列: " + ", ".join(INPUT_CSV_REQUIRED_COLUMNS))
         st.caption("pose_features.csv 最小必需列: " + ", ".join(FEATURE_CSV_REQUIRED_COLUMNS))
         st.caption(
-            "如果用 zip 数据包导入，建议包内文件名尽量使用 "
+            "如果使用 zip 或目录导入，建议文件名尽量使用 "
             "`input_pose_table.csv`、`pose_features.csv`、`pocket*`、`catalytic*`、`ligand*`，"
             "这样页面可以自动识别并回填路径。"
         )
@@ -995,13 +1068,21 @@ def _render_input_status_panel(
     if last_bundle_import_message:
         st.info(last_bundle_import_message)
     if isinstance(last_bundle_import, dict):
+        source_kind = "目录" if str(last_bundle_import.get("source_kind") or "") == "directory" else "zip"
         st.caption(
-            f"最近导入数据包: {last_bundle_import.get('source_name', 'N/A')} | "
-            f"共解压 {int(last_bundle_import.get('file_count') or 0)} 个文件"
+            f"最近导入数据源: {last_bundle_import.get('source_name', 'N/A')} ({source_kind}) | "
+            f"共扫描 {int(last_bundle_import.get('file_count') or 0)} 个文件"
         )
+        source_path = str(last_bundle_import.get("source_path") or "")
+        if source_path:
+            st.code(source_path, language="text")
         detected_items = last_bundle_import.get("detected_items")
         if isinstance(detected_items, list) and detected_items:
             st.dataframe(pd.DataFrame(detected_items), use_container_width=True, hide_index=True)
+        preview_items = last_bundle_import.get("bundle_preview_items")
+        if isinstance(preview_items, list) and preview_items:
+            with st.expander("查看导入源文件预览"):
+                st.dataframe(pd.DataFrame(preview_items), use_container_width=True, hide_index=True)
 
 
 def _try_relative_to(path: Path, base: Path) -> Path | None:
@@ -1641,6 +1722,7 @@ def _initialize_state() -> None:
         st.session_state.setdefault(key, value)
 
     st.session_state.setdefault("bundle_zip_local_path", "")
+    st.session_state.setdefault("bundle_dir_local_path", "")
     st.session_state.setdefault("last_run_dir", None)
     st.session_state.setdefault("last_summary", None)
     st.session_state.setdefault("last_metadata", None)
@@ -1860,8 +1942,9 @@ def main() -> None:
         st.subheader("数据包导入")
         bundle_zip_upload = st.file_uploader("上传 zip 数据包", type=["zip"], key="bundle_zip_upload")
         st.text_input("或填写 zip 本地路径", key="bundle_zip_local_path")
+        st.text_input("或填写数据目录路径", key="bundle_dir_local_path")
         bundle_import_clicked = st.button("导入并自动识别输入", use_container_width=True)
-        st.caption("适合把 CSV、PDB 和 pocket/catalytic/ligand 默认文件一起打包后一次导入。")
+        st.caption("支持两种方式：导入 zip，或直接扫描本地数据目录。两者二选一。")
 
         st.subheader("主输入")
         input_csv_upload = None
@@ -1945,9 +2028,10 @@ def main() -> None:
 
     if bundle_import_clicked:
         try:
-            report = _import_input_bundle(
+            report = _import_bundle_source(
                 uploaded_file=bundle_zip_upload,
-                local_path_text=str(st.session_state.get("bundle_zip_local_path") or ""),
+                zip_local_path_text=str(st.session_state.get("bundle_zip_local_path") or ""),
+                directory_local_path_text=str(st.session_state.get("bundle_dir_local_path") or ""),
             )
             st.session_state["last_bundle_import"] = report
             st.session_state["last_bundle_import_message"] = _apply_bundle_import(report)

@@ -233,6 +233,7 @@
 - 新增本地交互入口 [local_ml_app.py](local_ml_app.py)
 - 支持通过本地页面上传或直接指定本机文件路径
 - 支持导入单个 `zip` 数据包并自动识别 `input_csv` / `feature_csv` / `pocket` / `catalytic` / `ligand` 文件
+- 支持直接扫描本地数据目录并自动识别同类输入
 - 支持直接下载 `input_csv` 与 `pose_features.csv` 模板
 - 支持在页面中填写常用参数、执行推荐流程、预览排名和下载关键产物
 - 支持在正式运行前检查主输入必需列、label 状态和默认文件来源
@@ -518,6 +519,7 @@ start_local_app.bat
 - 页面里可选择从 `input_csv` 或 `pose_features.csv` 启动
 - 支持上传文件，也支持直接填写本机文件路径
 - 支持导入单个 zip 数据包，并自动回填 `input_csv` / `feature_csv` / 默认文件路径
+- 支持直接填写一个本地数据目录路径并自动扫描、回填输入
 - 支持直接下载 `input_csv` / `pose_features.csv` 模板，减少手工整理格式
 - 支持填写常用参数：
   - `top_k`
