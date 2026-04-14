@@ -418,6 +418,406 @@ def _load_parameter_template(template_name: str) -> dict[str, Any] | None:
     return _load_json(path)
 
 
+def _allocate_run_identity(preferred_name: str) -> tuple[str, Path]:
+    safe_name = _slugify_name(preferred_name)
+    candidate_root = LOCAL_APP_RUN_ROOT / safe_name
+    if not candidate_root.exists():
+        return safe_name, candidate_root
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    indexed_name = f"{safe_name}_{stamp}"
+    candidate_root = LOCAL_APP_RUN_ROOT / indexed_name
+    if not candidate_root.exists():
+        return indexed_name, candidate_root
+
+    suffix = 2
+    while True:
+        next_name = f"{indexed_name}_{suffix:02d}"
+        next_root = LOCAL_APP_RUN_ROOT / next_name
+        if not next_root.exists():
+            return next_name, next_root
+        suffix += 1
+
+
+def _prepare_run_request_from_form(
+    *,
+    input_csv_upload: Any,
+    feature_csv_upload: Any,
+    default_pocket_upload: Any,
+    default_catalytic_upload: Any,
+    default_ligand_upload: Any,
+) -> dict[str, Any]:
+    form_payload = _build_form_payload()
+    safe_run_name, run_root = _allocate_run_identity(str(form_payload.get("run_name", "")))
+    input_dir = run_root / "inputs"
+    out_dir = run_root / "outputs"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    input_csv = _resolve_input_file(
+        uploaded_file=input_csv_upload,
+        local_path_text=str(form_payload.get("input_csv_local_path") or ""),
+        dst_dir=input_dir,
+        required=str(form_payload.get("start_mode")) == "input_csv",
+        label="input_csv",
+    )
+    feature_csv = _resolve_input_file(
+        uploaded_file=feature_csv_upload,
+        local_path_text=str(form_payload.get("feature_csv_local_path") or ""),
+        dst_dir=input_dir,
+        required=str(form_payload.get("start_mode")) == "feature_csv",
+        label="feature_csv",
+    )
+    default_pocket_file = _resolve_input_file(
+        uploaded_file=default_pocket_upload,
+        local_path_text=str(form_payload.get("default_pocket_local_path") or ""),
+        dst_dir=input_dir,
+        required=False,
+        label="default_pocket_file",
+    )
+    default_catalytic_file = _resolve_input_file(
+        uploaded_file=default_catalytic_upload,
+        local_path_text=str(form_payload.get("default_catalytic_local_path") or ""),
+        dst_dir=input_dir,
+        required=False,
+        label="default_catalytic_file",
+    )
+    default_ligand_file = _resolve_input_file(
+        uploaded_file=default_ligand_upload,
+        local_path_text=str(form_payload.get("default_ligand_local_path") or ""),
+        dst_dir=input_dir,
+        required=False,
+        label="default_ligand_file",
+    )
+
+    resolved_inputs = {
+        "input_csv": None if input_csv is None else str(input_csv),
+        "feature_csv": None if feature_csv is None else str(feature_csv),
+        "default_pocket_file": None if default_pocket_file is None else str(default_pocket_file),
+        "default_catalytic_file": None if default_catalytic_file is None else str(default_catalytic_file),
+        "default_ligand_file": None if default_ligand_file is None else str(default_ligand_file),
+    }
+
+    command = _build_pipeline_command(
+        start_mode=str(form_payload.get("start_mode")),
+        input_csv=input_csv,
+        feature_csv=feature_csv,
+        out_dir=out_dir,
+        default_pocket_file=default_pocket_file,
+        default_catalytic_file=default_catalytic_file,
+        default_ligand_file=default_ligand_file,
+        default_antigen_chain=str(form_payload.get("default_antigen_chain") or ""),
+        default_nanobody_chain=str(form_payload.get("default_nanobody_chain") or ""),
+        top_k=int(form_payload.get("top_k", 3)),
+        train_epochs=int(form_payload.get("train_epochs", 20)),
+        train_batch_size=int(form_payload.get("train_batch_size", 64)),
+        train_val_ratio=float(form_payload.get("train_val_ratio", 0.25)),
+        train_early_stopping_patience=int(form_payload.get("train_early_stopping_patience", 8)),
+        seed=int(form_payload.get("seed", 42)),
+        skip_failed_rows=bool(form_payload.get("skip_failed_rows", True)),
+        disable_label_aware_steps=bool(form_payload.get("disable_label_aware_steps", False)),
+    )
+    pipeline_kwargs = _build_pipeline_kwargs(
+        form_payload=form_payload,
+        out_dir=out_dir,
+        input_csv=input_csv,
+        feature_csv=feature_csv,
+        default_pocket_file=default_pocket_file,
+        default_catalytic_file=default_catalytic_file,
+        default_ligand_file=default_ligand_file,
+    )
+    summary_path = out_dir / "recommended_pipeline_summary.json"
+    metadata = {
+        "run_name": safe_run_name,
+        "created_at": _now_text(),
+        "status": "prepared",
+        "execution_mode": "subprocess_cli_background",
+        "start_mode": str(form_payload.get("start_mode")),
+        "form_payload": form_payload,
+        "resolved_inputs": resolved_inputs,
+        "command": command,
+        "pipeline_kwargs": pipeline_kwargs,
+        "returncode": None,
+        "out_dir": str(out_dir),
+        "summary_path": str(summary_path),
+        "diagnostics": None,
+        "error_text": "",
+    }
+    _write_json(run_root / APP_RUN_METADATA_NAME, metadata)
+    _write_text(run_root / APP_STDOUT_NAME, "")
+    _write_text(run_root / APP_STDERR_NAME, "")
+
+    return {
+        "run_name": safe_run_name,
+        "run_root": str(run_root),
+        "input_dir": str(input_dir),
+        "out_dir": str(out_dir),
+        "summary_path": str(summary_path),
+        "command": command,
+        "resolved_inputs": resolved_inputs,
+        "form_payload": form_payload,
+        "pipeline_kwargs": pipeline_kwargs,
+    }
+
+
+def _read_run_metadata(run_root: Path) -> dict[str, Any]:
+    metadata = _load_json(run_root / APP_RUN_METADATA_NAME)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _write_run_metadata(run_root: Path, metadata: dict[str, Any]) -> None:
+    _write_json(run_root / APP_RUN_METADATA_NAME, metadata)
+
+
+def _build_cancelled_diagnostics(
+    *,
+    stdout_text: str,
+    stderr_text: str,
+    out_dir: Path,
+    resolved_inputs: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "status": "cancelled",
+        "messages": ["运行已被用户主动停止。"],
+        "suggestions": [
+            "如需继续，先检查当前输出目录里是否已有部分产物，再决定是否重跑。",
+            "如果这次输入需要保留，可直接从运行历史载入并再次加入队列。",
+        ],
+        "failed_stage": None,
+        "resolved_inputs": resolved_inputs or {},
+        "stdout_excerpt": _extract_tail(stdout_text),
+        "stderr_excerpt": _extract_tail(stderr_text),
+        "out_dir": str(out_dir),
+        "output_dir_exists": out_dir.exists(),
+    }
+
+
+def _finalize_background_run(
+    *,
+    run_info: dict[str, Any],
+    returncode: int,
+    forced_status: str | None = None,
+    forced_error_text: str | None = None,
+) -> dict[str, Any]:
+    run_root = Path(str(run_info["run_root"]))
+    out_dir = Path(str(run_info["out_dir"]))
+    summary_path = Path(str(run_info["summary_path"]))
+    resolved_inputs = run_info.get("resolved_inputs") if isinstance(run_info.get("resolved_inputs"), dict) else {}
+    stdout_text = _read_text(run_root / APP_STDOUT_NAME)
+    stderr_text = _read_text(run_root / APP_STDERR_NAME)
+    summary = _load_json(summary_path)
+
+    if forced_status == "cancelled":
+        status = "cancelled"
+        diagnostics = _build_cancelled_diagnostics(
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+            out_dir=out_dir,
+            resolved_inputs=resolved_inputs,
+        )
+        error_text = forced_error_text or f"Run cancelled by user. Output directory: {out_dir}"
+    elif returncode == 0:
+        status = "success"
+        diagnostics = _build_success_diagnostics(summary, resolved_inputs, out_dir)
+        error_text = ""
+    else:
+        status = "failed"
+        diagnostics = _build_failure_diagnostics(
+            returncode=int(returncode),
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+            summary=summary,
+            out_dir=out_dir,
+            resolved_inputs=resolved_inputs,
+        )
+        error_text = forced_error_text or (
+            f"Pipeline failed with rc={returncode}. "
+            f"Check diagnostics, stderr and output directory: {out_dir}"
+        )
+
+    metadata = _read_run_metadata(run_root)
+    metadata.update(
+        {
+            "status": status,
+            "finished_at": _now_text(),
+            "returncode": int(returncode),
+            "diagnostics": diagnostics,
+            "error_text": error_text,
+        }
+    )
+    _write_run_metadata(run_root, metadata)
+
+    _set_last_run_state(
+        run_root=run_root,
+        summary=summary,
+        metadata=metadata,
+        stdout_text=stdout_text,
+        stderr_text=stderr_text,
+        diagnostics=diagnostics,
+        error_text=error_text,
+    )
+    return {
+        "status": status,
+        "error_text": error_text,
+        "run_root": str(run_root),
+    }
+
+
+def _start_background_run(run_info: dict[str, Any], *, queue_source: str) -> None:
+    run_root = Path(str(run_info["run_root"]))
+    stdout_path = run_root / APP_STDOUT_NAME
+    stderr_path = run_root / APP_STDERR_NAME
+    metadata = _read_run_metadata(run_root)
+    metadata.update(
+        {
+            "status": "running",
+            "started_at": _now_text(),
+            "queue_source": queue_source,
+        }
+    )
+
+    with stdout_path.open("w", encoding="utf-8") as stdout_handle, stderr_path.open("w", encoding="utf-8") as stderr_handle:
+        process = subprocess.Popen(
+            run_info["command"],
+            cwd=str(REPO_ROOT),
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+        )
+
+    metadata["pid"] = int(process.pid)
+    _write_run_metadata(run_root, metadata)
+    active_run = dict(run_info)
+    active_run["pid"] = int(process.pid)
+    active_run["queue_source"] = queue_source
+    st.session_state["active_process"] = process
+    st.session_state["active_run_info"] = active_run
+    st.session_state["last_scheduler_message"] = f"已启动运行: {run_info['run_name']}"
+
+
+def _maybe_start_next_queued_run() -> bool:
+    queue = st.session_state.get("run_queue")
+    if not isinstance(queue, list) or not queue:
+        st.session_state["queue_auto_run"] = False
+        return False
+    if st.session_state.get("active_process") is not None:
+        return False
+
+    next_run = queue.pop(0)
+    st.session_state["run_queue"] = queue
+    _start_background_run(next_run, queue_source="batch_queue")
+    return True
+
+
+def _sync_background_run_state() -> None:
+    process = st.session_state.get("active_process")
+    active_run = st.session_state.get("active_run_info")
+    if process is None or not isinstance(active_run, dict):
+        return
+
+    returncode = process.poll()
+    if returncode is None:
+        return
+
+    result = _finalize_background_run(
+        run_info=active_run,
+        returncode=int(returncode),
+    )
+    st.session_state["active_process"] = None
+    st.session_state["active_run_info"] = None
+
+    if result["status"] == "success":
+        st.session_state["last_scheduler_message"] = f"运行完成: {active_run['run_name']}"
+    elif result["status"] == "failed":
+        st.session_state["last_scheduler_message"] = f"运行失败: {active_run['run_name']}"
+    else:
+        st.session_state["last_scheduler_message"] = f"运行结束: {active_run['run_name']}"
+
+    if bool(st.session_state.get("queue_auto_run", False)):
+        started = _maybe_start_next_queued_run()
+        if started:
+            st.session_state["last_scheduler_message"] += "；已自动启动队列中的下一项。"
+
+
+def _stop_active_run() -> str:
+    process = st.session_state.get("active_process")
+    active_run = st.session_state.get("active_run_info")
+    if process is None or not isinstance(active_run, dict):
+        return "当前没有正在运行的任务。"
+
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+    returncode = int(process.poll() if process.poll() is not None else -1)
+    _finalize_background_run(
+        run_info=active_run,
+        returncode=returncode,
+        forced_status="cancelled",
+        forced_error_text="Run cancelled by user.",
+    )
+    st.session_state["active_process"] = None
+    st.session_state["active_run_info"] = None
+    st.session_state["queue_auto_run"] = False
+    message = f"已停止当前运行: {active_run['run_name']}；剩余队列已保留。"
+    st.session_state["last_scheduler_message"] = message
+    return message
+
+
+def _build_run_queue_table(queue: list[dict[str, Any]]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for idx, item in enumerate(queue, start=1):
+        rows.append(
+            {
+                "序号": idx,
+                "run_name": str(item.get("run_name") or ""),
+                "start_mode": str(item.get("form_payload", {}).get("start_mode") or ""),
+                "out_dir": str(item.get("out_dir") or ""),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _render_scheduler_panel() -> None:
+    st.subheader("运行调度")
+    scheduler_message = str(st.session_state.get("last_scheduler_message") or "")
+    if scheduler_message:
+        st.info(scheduler_message)
+
+    refresh_col1, refresh_col2 = st.columns(2)
+    refresh_clicked = refresh_col1.button("刷新运行状态", use_container_width=True)
+    auto_queue_enabled = bool(st.session_state.get("queue_auto_run", False))
+    refresh_col2.metric("队列自动续跑", "开" if auto_queue_enabled else "关")
+    if refresh_clicked:
+        st.rerun()
+
+    active_run = st.session_state.get("active_run_info")
+    if isinstance(active_run, dict):
+        active_df = pd.DataFrame(
+            [
+                {
+                    "当前状态": "running",
+                    "run_name": str(active_run.get("run_name") or ""),
+                    "来源": str(active_run.get("queue_source") or "direct"),
+                    "PID": int(active_run.get("pid") or 0),
+                    "输出目录": str(active_run.get("out_dir") or ""),
+                }
+            ]
+        )
+        st.dataframe(active_df, use_container_width=True, hide_index=True)
+    else:
+        st.caption("当前没有正在运行的任务。")
+
+    queue = st.session_state.get("run_queue")
+    if isinstance(queue, list) and queue:
+        st.caption(f"当前队列长度: {len(queue)}")
+        st.dataframe(_build_run_queue_table(queue), use_container_width=True, hide_index=True)
+    else:
+        st.caption("当前队列为空。")
+
+
 def _get_out_dir(summary: dict[str, Any] | None, metadata: dict[str, Any] | None = None) -> Path | None:
     if isinstance(summary, dict) and summary.get("out_dir"):
         return Path(str(summary["out_dir"]))
@@ -1736,6 +2136,11 @@ def _initialize_state() -> None:
     st.session_state.setdefault("last_bundle_import", None)
     st.session_state.setdefault("last_bundle_import_message", "")
     st.session_state.setdefault("last_preflight", None)
+    st.session_state.setdefault("run_queue", [])
+    st.session_state.setdefault("active_process", None)
+    st.session_state.setdefault("active_run_info", None)
+    st.session_state.setdefault("queue_auto_run", False)
+    st.session_state.setdefault("last_scheduler_message", "")
 
 
 def _run_pipeline_from_form(
@@ -1894,11 +2299,12 @@ def main() -> None:
         layout="wide",
     )
     _initialize_state()
+    _sync_background_run_state()
 
     st.title(f"{APP_NAME} 本地交互运行器")
     st.caption(
         f"版本 {APP_VERSION} | 通道 {APP_RELEASE_CHANNEL} | "
-        "基于当前仓库现有 CLI 流程构建的本地交互壳，当前重点支持上传/路径输入、参数模板、运行历史和失败诊断。"
+        "基于当前仓库现有 CLI 流程构建的本地交互壳，当前重点支持上传/路径输入、参数模板、运行历史、失败诊断以及基础任务队列。"
     )
 
     history_records = _build_history_records()
@@ -1985,24 +2391,50 @@ def main() -> None:
         st.checkbox("disable_label_aware_steps", key="disable_label_aware_steps")
 
         current_start_mode = str(st.session_state.get("start_mode") or "input_csv")
+        active_running = isinstance(st.session_state.get("active_run_info"), dict)
         run_ready = (
             _source_present(input_csv_upload, str(st.session_state.get("input_csv_local_path") or ""))
             if current_start_mode == "input_csv"
             else _source_present(feature_csv_upload, str(st.session_state.get("feature_csv_local_path") or ""))
         )
-        check_inputs_clicked = st.button(
+        action_row1 = st.columns(2)
+        check_inputs_clicked = action_row1[0].button(
             "检查当前输入",
             use_container_width=True,
             disabled=not run_ready,
         )
-        run_clicked = st.button(
-            "运行推荐流程",
+        run_clicked = action_row1[1].button(
+            "立即运行",
             use_container_width=True,
             type="primary",
+            disabled=(not run_ready) or active_running,
+        )
+        action_row2 = st.columns(2)
+        enqueue_clicked = action_row2[0].button(
+            "加入队列",
+            use_container_width=True,
             disabled=not run_ready,
         )
+        start_queue_clicked = action_row2[1].button(
+            "启动队列",
+            use_container_width=True,
+            disabled=active_running or not bool(st.session_state.get("run_queue")),
+        )
+        action_row3 = st.columns(2)
+        stop_active_clicked = action_row3[0].button(
+            "停止当前运行",
+            use_container_width=True,
+            disabled=not active_running,
+        )
+        clear_queue_clicked = action_row3[1].button(
+            "清空队列",
+            use_container_width=True,
+            disabled=not bool(st.session_state.get("run_queue")),
+        )
         if not run_ready:
-            st.caption("先提供当前启动方式所需的主输入 CSV，再执行检查或运行。")
+            st.caption("先提供当前启动方式所需的主输入 CSV，再执行检查、加入队列或运行。")
+        elif active_running:
+            st.caption("当前已有任务在运行。你仍然可以把新的配置加入队列，或先停止当前任务。")
 
     if save_template_clicked:
         template_name = str(st.session_state.get("template_name") or "").strip()
@@ -2040,6 +2472,43 @@ def main() -> None:
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
+
+    if enqueue_clicked:
+        try:
+            run_request = _prepare_run_request_from_form(
+                input_csv_upload=input_csv_upload,
+                feature_csv_upload=feature_csv_upload,
+                default_pocket_upload=default_pocket_upload,
+                default_catalytic_upload=default_catalytic_upload,
+                default_ligand_upload=default_ligand_upload,
+            )
+            queue = st.session_state.get("run_queue")
+            if not isinstance(queue, list):
+                queue = []
+            queue.append(run_request)
+            st.session_state["run_queue"] = queue
+            st.session_state["last_scheduler_message"] = f"已加入队列: {run_request['run_name']}"
+            st.success(st.session_state["last_scheduler_message"])
+        except Exception as exc:
+            st.error(str(exc))
+
+    if start_queue_clicked:
+        st.session_state["queue_auto_run"] = True
+        started = _maybe_start_next_queued_run()
+        if started:
+            st.success(str(st.session_state.get("last_scheduler_message") or "已启动队列中的首个任务。"))
+        else:
+            st.info("当前没有可启动的排队任务。")
+
+    if stop_active_clicked:
+        message = _stop_active_run()
+        st.warning(message)
+
+    if clear_queue_clicked:
+        st.session_state["run_queue"] = []
+        st.session_state["queue_auto_run"] = False
+        st.session_state["last_scheduler_message"] = "已清空当前队列。"
+        st.info(st.session_state["last_scheduler_message"])
 
     if load_history_clicked:
         selected_history_label = str(st.session_state.get("selected_history_label") or "").strip()
@@ -2079,16 +2548,18 @@ def main() -> None:
 
     if run_clicked:
         try:
-            with st.spinner("正在执行 pipeline，这一步会调用现有 Python CLI，请等待..."):
-                _run_pipeline_from_form(
+            with st.spinner("正在启动后台运行任务，请等待..."):
+                run_request = _prepare_run_request_from_form(
                     input_csv_upload=input_csv_upload,
                     feature_csv_upload=feature_csv_upload,
                     default_pocket_upload=default_pocket_upload,
                     default_catalytic_upload=default_catalytic_upload,
                     default_ligand_upload=default_ligand_upload,
                 )
+                st.session_state["queue_auto_run"] = False
+                _start_background_run(run_request, queue_source="direct_run")
             st.session_state["last_preflight"] = None
-            st.success("Pipeline 执行完成。")
+            st.success("任务已启动。可在下方“运行调度”查看状态，运行结束后结果面板会自动接管最近一次完成任务。")
         except Exception as exc:
             st.error(str(exc))
 
@@ -2102,6 +2573,7 @@ def main() -> None:
         form_payload=_build_form_payload(),
     )
     _render_preflight_report(st.session_state.get("last_preflight"))
+    _render_scheduler_panel()
 
     summary = st.session_state.get("last_summary")
     metadata = st.session_state.get("last_metadata")

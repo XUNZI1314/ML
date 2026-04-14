@@ -237,6 +237,8 @@
 - 支持直接下载 `input_csv` 与 `pose_features.csv` 模板
 - 支持在页面中填写常用参数、执行推荐流程、预览排名和下载关键产物
 - 支持在正式运行前检查主输入必需列、label 状态和默认文件来源
+- 支持把当前表单配置加入批量任务队列，并按顺序启动
+- 支持停止当前后台运行任务，保留剩余队列
 - 支持保存/载入参数模板，减少重复填写
 - 支持加载最近运行历史并恢复结果与表单参数
 - 支持在页面中输出失败诊断摘要，帮助快速定位输入路径/依赖/阶段性失败
@@ -244,7 +246,8 @@
 - 支持对 ranking / pose 结果做 Top-N 预览和关键 ID 过滤
 - 支持查看运行产物清单，并一键打开最近运行目录或输出目录
 - 支持把当前运行的关键结果、日志和 metadata 一键打包成 zip 汇总包
-- 页面内部现在优先通过 `run_recommended_pipeline(...)` 直接调用 orchestration 函数，保留 CLI 仅用于复现和独立执行
+- 页面当前默认通过 CLI 子进程方式执行推荐流程，便于支持后台运行、任务队列和停止任务
+- `run_recommended_pipeline(...)` 仍然保留为可复用的 Python 入口，便于后续继续扩展
 - 新增桌面启动器 [ml_desktop_launcher.py](ml_desktop_launcher.py) 与构建脚本 [build_desktop_app.bat](build_desktop_app.bat)
 - 已可构建 `dist/ML_Local_App.exe`，双击后会拉起本地交互界面
 - 新增便携目录打包脚本 [build_portable_bundle.py](build_portable_bundle.py) 与 [build_portable_bundle.bat](build_portable_bundle.bat)
@@ -531,8 +534,13 @@ start_local_app.bat
   - 检查必需列是否完整
   - 检查 label 是否足够支持 compare/calibration
   - 检查默认 `pocket/catalytic/ligand` 文件是否已有来源
-- 页面内部优先直接调用 [run_recommended_pipeline.py](run_recommended_pipeline.py) 暴露的函数入口
-- 同时保留 CLI 等价命令，便于复现和脱离 UI 独立执行
+- 支持基础任务调度：
+  - 立即运行当前表单配置
+  - 把多组配置加入队列顺序执行
+  - 在需要时停止当前后台任务
+- 页面当前默认通过 [run_recommended_pipeline.py](run_recommended_pipeline.py) 的 CLI 子进程方式执行
+- 这样可以支持后台运行、任务队列和停止当前任务
+- 同时保留 `run_recommended_pipeline(...)` 这个 Python 级入口，便于后续继续扩展
 - 运行后可在页面中预览：
   - `nanobody_ranking.csv`
   - `pose_predictions.csv`
