@@ -9,7 +9,7 @@ import traceback
 import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,34 @@ KNOWN_STAGE_SUGGESTIONS = {
     "summarize_rule_ml_improvement": "优先检查 baseline/calibrated comparison summary JSON 是否存在。",
     "optimize_calibration_strategy": "优先检查 aggregation_calibration_trials.csv 是否生成成功。",
 }
+
+INPUT_CSV_REQUIRED_COLUMNS = [
+    "nanobody_id",
+    "conformer_id",
+    "pose_id",
+    "pdb_path",
+]
+FEATURE_CSV_REQUIRED_COLUMNS = [
+    "nanobody_id",
+    "conformer_id",
+    "pose_id",
+]
+INPUT_CSV_OPTIONAL_HINT_COLUMNS = [
+    "pocket_file",
+    "catalytic_file",
+    "ligand_file",
+    "label",
+]
+FEATURE_CSV_OPTIONAL_HINT_COLUMNS = [
+    "label",
+    "pred_prob",
+    "pocket_hit_fraction",
+    "catalytic_hit_fraction",
+    "mouth_occlusion_score",
+    "min_distance_to_pocket",
+]
+BUNDLE_IMPORT_ROOT = LOCAL_APP_RUN_ROOT / "_bundle_imports"
+BUNDLE_IMPORT_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def _slugify_name(value: str) -> str:
@@ -113,6 +141,45 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     _write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _build_sample_input_csv_text() -> str:
+    df = pd.DataFrame(
+        [
+            {
+                "nanobody_id": "NB001",
+                "conformer_id": "conf_01",
+                "pose_id": "pose_001",
+                "pdb_path": r"data\complex_001.pdb",
+                "antigen_chain": "A",
+                "nanobody_chain": "H",
+                "pocket_file": r"data\pocket_residues.txt",
+                "catalytic_file": r"data\catalytic_residues.txt",
+                "ligand_file": r"data\ligand_template.pdb",
+                "label": 1,
+            }
+        ]
+    )
+    return df.to_csv(index=False)
+
+
+def _build_sample_feature_csv_text() -> str:
+    df = pd.DataFrame(
+        [
+            {
+                "nanobody_id": "NB001",
+                "conformer_id": "conf_01",
+                "pose_id": "pose_001",
+                "pocket_hit_fraction": 0.72,
+                "catalytic_hit_fraction": 0.35,
+                "mouth_occlusion_score": 0.64,
+                "min_distance_to_pocket": 3.1,
+                "pred_prob": 0.81,
+                "label": 1,
+            }
+        ]
+    )
+    return df.to_csv(index=False)
+
+
 def _load_page_icon() -> Image.Image | str:
     icon_path = REPO_ROOT / "assets" / "app_icon.png"
     if icon_path.exists():
@@ -128,6 +195,12 @@ def _save_uploaded_file(uploaded_file: Any, dst_dir: Path) -> Path:
     out_path = dst_dir / str(uploaded_file.name)
     out_path.write_bytes(bytes(uploaded_file.getbuffer()))
     return out_path
+
+
+def _source_present(uploaded_file: Any, local_path_text: str) -> bool:
+    if str(local_path_text or "").strip():
+        return True
+    return uploaded_file is not None
 
 
 def _resolve_input_file(
@@ -374,6 +447,561 @@ def _format_size_text(path: Path) -> str:
             return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024.0
     return "N/A"
+
+
+def _format_byte_count(byte_count: int) -> str:
+    size = float(max(0, int(byte_count)))
+    units = ["B", "KB", "MB", "GB"]
+    for unit in units:
+        if size < 1024.0 or unit == units[-1]:
+            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024.0
+    return "N/A"
+
+
+def _count_label_stats(df: pd.DataFrame, label_col: str = "label") -> dict[str, Any]:
+    if label_col not in df.columns:
+        return {
+            "has_label": False,
+            "label_valid_count": 0,
+            "label_class_count": 0,
+            "label_compare_possible": False,
+            "calibration_possible": False,
+        }
+
+    values = pd.to_numeric(df[label_col], errors="coerce")
+    valid_values = values.dropna()
+    if valid_values.empty:
+        return {
+            "has_label": True,
+            "label_valid_count": 0,
+            "label_class_count": 0,
+            "label_compare_possible": False,
+            "calibration_possible": False,
+        }
+
+    binary = (valid_values >= 0.5).astype(int)
+    label_class_count = int(binary.nunique())
+    label_valid_count = int(valid_values.shape[0])
+    return {
+        "has_label": True,
+        "label_valid_count": label_valid_count,
+        "label_class_count": label_class_count,
+        "label_compare_possible": bool(label_valid_count > 0 and label_class_count >= 2),
+        "calibration_possible": bool(label_valid_count >= 8 and label_class_count >= 2),
+    }
+
+
+def _summarize_csv_dataframe(
+    df: pd.DataFrame,
+    *,
+    required_columns: list[str],
+    optional_columns: list[str] | None = None,
+) -> dict[str, Any]:
+    missing_required = [col for col in required_columns if col not in df.columns]
+    optional_present = [col for col in (optional_columns or []) if col in df.columns]
+    preview_df = df.head(5).copy()
+    preview_df.columns = [str(col) for col in preview_df.columns]
+    label_stats = _count_label_stats(df)
+    return {
+        "row_count": int(df.shape[0]),
+        "column_count": int(df.shape[1]),
+        "columns_preview": [str(col) for col in df.columns[:12].tolist()],
+        "missing_required_columns": missing_required,
+        "optional_present_columns": optional_present,
+        "preview_rows": preview_df.to_dict(orient="records"),
+        **label_stats,
+    }
+
+
+def _inspect_csv_source(
+    *,
+    uploaded_file: Any,
+    local_path_text: str,
+    required_columns: list[str],
+    optional_columns: list[str] | None = None,
+) -> dict[str, Any]:
+    local_path = str(local_path_text or "").strip()
+    if local_path:
+        path = Path(local_path).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"路径不存在: {path}")
+        df = pd.read_csv(path, low_memory=False)
+        size_text = _format_size_text(path)
+        summary = _summarize_csv_dataframe(
+            df,
+            required_columns=required_columns,
+            optional_columns=optional_columns,
+        )
+        summary.update(
+            {
+                "source": "本地路径",
+                "display_name": path.name,
+                "path": str(path),
+                "size_text": size_text,
+            }
+        )
+        return summary
+
+    if uploaded_file is None:
+        raise ValueError("当前没有可检查的 CSV 输入。")
+
+    file_bytes = bytes(uploaded_file.getbuffer())
+    df = pd.read_csv(BytesIO(file_bytes), low_memory=False)
+    summary = _summarize_csv_dataframe(
+        df,
+        required_columns=required_columns,
+        optional_columns=optional_columns,
+    )
+    summary.update(
+        {
+            "source": "上传文件",
+            "display_name": str(uploaded_file.name),
+            "path": None,
+            "size_text": _format_byte_count(len(file_bytes)),
+        }
+    )
+    return summary
+
+
+def _build_source_status_row(
+    *,
+    label: str,
+    uploaded_file: Any,
+    local_path_text: str,
+    required: bool,
+) -> dict[str, Any]:
+    local_path = str(local_path_text or "").strip()
+    if local_path:
+        path = Path(local_path).expanduser().resolve()
+        return {
+            "输入项": label,
+            "来源": "本地路径",
+            "状态": "就绪" if path.exists() else "路径不存在",
+            "详情": str(path),
+        }
+
+    if uploaded_file is not None:
+        upload_size = getattr(uploaded_file, "size", None)
+        size_text = _format_byte_count(int(upload_size)) if upload_size is not None else "上传文件"
+        return {
+            "输入项": label,
+            "来源": "上传文件",
+            "状态": "就绪",
+            "详情": f"{uploaded_file.name} ({size_text})",
+        }
+
+    return {
+        "输入项": label,
+        "来源": "未提供",
+        "状态": "缺失" if required else "可选",
+        "详情": "",
+    }
+
+
+def _choose_bundle_candidate(
+    root: Path,
+    *,
+    exact_names: list[str],
+    contains_text: str | None = None,
+    suffixes: set[str] | None = None,
+) -> Path | None:
+    exact = {name.lower() for name in exact_names}
+    contains = None if contains_text is None else contains_text.lower()
+    candidates: list[tuple[int, int, int, str, Path]] = []
+
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        name = path.name.lower()
+        suffix = path.suffix.lower()
+        if suffixes and suffix not in suffixes:
+            continue
+
+        priority: int | None = None
+        if name in exact:
+            priority = 0
+        elif contains and contains in name:
+            priority = 1
+
+        if priority is None:
+            continue
+
+        relative_depth = len(path.relative_to(root).parts)
+        candidates.append((priority, relative_depth, len(name), str(path).lower(), path))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+    return candidates[0][-1]
+
+
+def _import_input_bundle(*, uploaded_file: Any, local_path_text: str) -> dict[str, Any]:
+    local_path = str(local_path_text or "").strip()
+    source_name = ""
+    zip_path: Path | None = None
+    zip_bytes: bytes | None = None
+
+    if local_path:
+        zip_path = Path(local_path).expanduser().resolve()
+        if not zip_path.exists():
+            raise FileNotFoundError(f"数据包路径不存在: {zip_path}")
+        source_name = zip_path.name
+    elif uploaded_file is not None:
+        source_name = str(uploaded_file.name)
+        zip_bytes = bytes(uploaded_file.getbuffer())
+    else:
+        raise ValueError("请先上传 zip 数据包，或填写 zip 本地路径。")
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    import_root = BUNDLE_IMPORT_ROOT / f"{stamp}_{_slugify_name(Path(source_name).stem)}"
+    extracted_root = import_root / "extracted"
+    import_root.mkdir(parents=True, exist_ok=True)
+    extracted_root.mkdir(parents=True, exist_ok=True)
+
+    if zip_path is None:
+        zip_path = import_root / source_name
+        zip_path.write_bytes(zip_bytes or b"")
+
+    try:
+        with zipfile.ZipFile(zip_path, mode="r") as zf:
+            zf.extractall(extracted_root)
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"无效 zip 文件: {zip_path}") from exc
+
+    detected_paths: dict[str, str] = {}
+    detection_rules: list[tuple[str, list[str], str | None, set[str] | None]] = [
+        ("input_csv_local_path", ["input_pose_table.csv"], "input", {".csv"}),
+        ("feature_csv_local_path", ["pose_features.csv"], "feature", {".csv"}),
+        ("default_pocket_local_path", [], "pocket", None),
+        ("default_catalytic_local_path", [], "catalytic", None),
+        ("default_ligand_local_path", [], "ligand", None),
+    ]
+    for key, exact_names, contains_text, suffixes in detection_rules:
+        detected_path = _choose_bundle_candidate(
+            extracted_root,
+            exact_names=exact_names,
+            contains_text=contains_text,
+            suffixes=suffixes,
+        )
+        if detected_path is not None:
+            detected_paths[key] = str(detected_path.resolve())
+
+    extracted_files = [path for path in extracted_root.rglob("*") if path.is_file()]
+    return {
+        "source_name": source_name,
+        "source_zip": str(zip_path),
+        "import_root": str(import_root.resolve()),
+        "extracted_root": str(extracted_root.resolve()),
+        "file_count": len(extracted_files),
+        "detected_paths": detected_paths,
+        "detected_items": [
+            {"字段": key, "识别结果": value}
+            for key, value in detected_paths.items()
+        ],
+    }
+
+
+def _apply_bundle_import(report: dict[str, Any]) -> str:
+    detected_paths = report.get("detected_paths") if isinstance(report.get("detected_paths"), dict) else {}
+    if not detected_paths:
+        return "已导入数据包，但没有自动识别到 input/feature/default 文件，请手动填写路径。"
+
+    for key, value in detected_paths.items():
+        if value:
+            st.session_state[key] = value
+
+    if detected_paths.get("input_csv_local_path") and not detected_paths.get("feature_csv_local_path"):
+        st.session_state["start_mode"] = "input_csv"
+    elif detected_paths.get("feature_csv_local_path") and not detected_paths.get("input_csv_local_path"):
+        st.session_state["start_mode"] = "feature_csv"
+
+    mapped_labels = {
+        "input_csv_local_path": "input_csv",
+        "feature_csv_local_path": "feature_csv",
+        "default_pocket_local_path": "default_pocket_file",
+        "default_catalytic_local_path": "default_catalytic_file",
+        "default_ligand_local_path": "default_ligand_file",
+    }
+    detected_names = [mapped_labels.get(key, key) for key in detected_paths]
+    return (
+        f"已导入数据包 {report.get('source_name', '')}，自动识别 {len(detected_paths)} 个输入项："
+        + ", ".join(detected_names)
+    )
+
+
+def _build_preflight_report(
+    *,
+    start_mode: str,
+    input_csv_upload: Any,
+    feature_csv_upload: Any,
+    default_pocket_upload: Any,
+    default_catalytic_upload: Any,
+    default_ligand_upload: Any,
+    form_payload: dict[str, Any],
+) -> dict[str, Any]:
+    status = "ready"
+    messages: list[str] = []
+
+    optional_file_rows = [
+        _build_source_status_row(
+            label="default_pocket_file",
+            uploaded_file=default_pocket_upload,
+            local_path_text=str(form_payload.get("default_pocket_local_path") or ""),
+            required=False,
+        ),
+        _build_source_status_row(
+            label="default_catalytic_file",
+            uploaded_file=default_catalytic_upload,
+            local_path_text=str(form_payload.get("default_catalytic_local_path") or ""),
+            required=False,
+        ),
+        _build_source_status_row(
+            label="default_ligand_file",
+            uploaded_file=default_ligand_upload,
+            local_path_text=str(form_payload.get("default_ligand_local_path") or ""),
+            required=False,
+        ),
+    ]
+
+    if start_mode == "input_csv":
+        csv_summary = _inspect_csv_source(
+            uploaded_file=input_csv_upload,
+            local_path_text=str(form_payload.get("input_csv_local_path") or ""),
+            required_columns=INPUT_CSV_REQUIRED_COLUMNS,
+            optional_columns=INPUT_CSV_OPTIONAL_HINT_COLUMNS,
+        )
+        missing_required = csv_summary["missing_required_columns"]
+        if missing_required:
+            status = "error"
+            messages.append(f"input_csv 缺少必需列: {missing_required}")
+        else:
+            messages.append("input_csv 必需列完整，可进入 build_feature_table 阶段。")
+
+        missing_geometry_hints: list[str] = []
+        for col_name, field_name in [
+            ("pocket_file", "default_pocket_local_path"),
+            ("catalytic_file", "default_catalytic_local_path"),
+            ("ligand_file", "default_ligand_local_path"),
+        ]:
+            has_csv_col = col_name in csv_summary["optional_present_columns"]
+            uploaded_default_file = None
+            if field_name == "default_pocket_local_path":
+                uploaded_default_file = default_pocket_upload
+            elif field_name == "default_catalytic_local_path":
+                uploaded_default_file = default_catalytic_upload
+            elif field_name == "default_ligand_local_path":
+                uploaded_default_file = default_ligand_upload
+            has_default_file = _source_present(uploaded_default_file, str(form_payload.get(field_name) or ""))
+            if not has_csv_col and not has_default_file:
+                missing_geometry_hints.append(col_name)
+
+        if missing_geometry_hints and status != "error":
+            status = "warning"
+            messages.append(
+                "当前未在 input_csv 中发现这些列，也未提供对应默认文件："
+                f"{missing_geometry_hints}；相关几何特征可能为空或依赖行内数据补全。"
+            )
+        elif not missing_geometry_hints:
+            messages.append("pocket/catalytic/ligand 输入已从 CSV 列或默认文件中至少覆盖一套来源。")
+    else:
+        csv_summary = _inspect_csv_source(
+            uploaded_file=feature_csv_upload,
+            local_path_text=str(form_payload.get("feature_csv_local_path") or ""),
+            required_columns=FEATURE_CSV_REQUIRED_COLUMNS,
+            optional_columns=FEATURE_CSV_OPTIONAL_HINT_COLUMNS,
+        )
+        missing_required = csv_summary["missing_required_columns"]
+        if missing_required:
+            status = "error"
+            messages.append(f"pose_features.csv 缺少必需列: {missing_required}")
+        else:
+            messages.append("pose_features.csv 最小 ID 列完整，可直接进入 rule/ML 排名阶段。")
+
+        if not csv_summary.get("has_label"):
+            if status != "error":
+                status = "warning"
+            messages.append("当前没有 label 列，compare/calibration/strategy optimize 会被自动跳过。")
+        elif not csv_summary.get("label_compare_possible"):
+            if status != "error":
+                status = "warning"
+            messages.append("label 有效样本不足或类别退化，label-aware 步骤会被自动跳过。")
+        else:
+            messages.append(
+                f"检测到 {csv_summary['label_valid_count']} 条有效 label，"
+                f"类别数 {csv_summary['label_class_count']}。"
+            )
+            if csv_summary.get("calibration_possible"):
+                messages.append("当前 label 数量已满足自动校准的最小要求。")
+            else:
+                if status != "error":
+                    status = "warning"
+                messages.append("当前 label 还不足 8 条，compare 可执行，但 calibration 会被自动跳过。")
+
+    return {
+        "checked_at": _now_text(),
+        "start_mode": start_mode,
+        "status": status,
+        "messages": messages,
+        "main_csv": csv_summary,
+        "optional_files": optional_file_rows,
+    }
+
+
+def _render_preflight_report(report: dict[str, Any] | None) -> None:
+    st.subheader("运行前检查")
+    if not isinstance(report, dict):
+        st.info("可在左侧点击“检查当前输入”，先确认必需列、label 状态和默认文件来源。")
+        return
+
+    checked_at = str(report.get("checked_at") or "")
+    if checked_at:
+        st.caption(f"最近一次检查时间: {checked_at}。如果你刚修改了输入，请重新点击“检查当前输入”。")
+
+    status = str(report.get("status") or "warning")
+    messages = report.get("messages") if isinstance(report.get("messages"), list) else []
+    if status == "ready":
+        st.success("运行前检查通过。")
+    elif status == "warning":
+        st.warning("运行前检查存在提醒项。")
+    else:
+        st.error("运行前检查发现阻塞问题。")
+
+    for message in messages:
+        st.write(f"- {message}")
+
+    main_csv = report.get("main_csv") if isinstance(report.get("main_csv"), dict) else {}
+    if main_csv:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("主输入来源", str(main_csv.get("source") or "N/A"))
+        c2.metric("主输入大小", str(main_csv.get("size_text") or "N/A"))
+        c3.metric("CSV 行数", int(main_csv.get("row_count") or 0))
+        c4.metric("CSV 列数", int(main_csv.get("column_count") or 0))
+
+        st.caption(
+            "字段预览: "
+            + ", ".join([str(col) for col in main_csv.get("columns_preview", [])])
+        )
+
+        missing_required = main_csv.get("missing_required_columns") if isinstance(main_csv.get("missing_required_columns"), list) else []
+        if missing_required:
+            st.error(f"缺少必需列: {missing_required}")
+
+        optional_present = main_csv.get("optional_present_columns") if isinstance(main_csv.get("optional_present_columns"), list) else []
+        if optional_present:
+            st.caption("已识别可选列: " + ", ".join(optional_present))
+
+        if main_csv.get("has_label"):
+            c5, c6, c7 = st.columns(3)
+            c5.metric("有效 label", int(main_csv.get("label_valid_count") or 0))
+            c6.metric("label 类别数", int(main_csv.get("label_class_count") or 0))
+            c7.metric(
+                "可做 calibration",
+                "是" if bool(main_csv.get("calibration_possible")) else "否",
+            )
+
+        preview_rows = main_csv.get("preview_rows") if isinstance(main_csv.get("preview_rows"), list) else []
+        if preview_rows:
+            st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
+
+    optional_files = report.get("optional_files") if isinstance(report.get("optional_files"), list) else []
+    if optional_files:
+        st.caption("默认文件来源检查")
+        st.dataframe(pd.DataFrame(optional_files), use_container_width=True, hide_index=True)
+
+
+def _render_input_status_panel(
+    *,
+    start_mode: str,
+    input_csv_upload: Any,
+    feature_csv_upload: Any,
+    default_pocket_upload: Any,
+    default_catalytic_upload: Any,
+    default_ligand_upload: Any,
+    form_payload: dict[str, Any],
+) -> None:
+    st.subheader("当前输入状态")
+    status_rows: list[dict[str, Any]] = []
+    if start_mode == "input_csv":
+        status_rows.append(
+            _build_source_status_row(
+                label="主输入 input_csv",
+                uploaded_file=input_csv_upload,
+                local_path_text=str(form_payload.get("input_csv_local_path") or ""),
+                required=True,
+            )
+        )
+    else:
+        status_rows.append(
+            _build_source_status_row(
+                label="主输入 feature_csv",
+                uploaded_file=feature_csv_upload,
+                local_path_text=str(form_payload.get("feature_csv_local_path") or ""),
+                required=True,
+            )
+        )
+    status_rows.extend(
+        [
+            _build_source_status_row(
+                label="default_pocket_file",
+                uploaded_file=default_pocket_upload,
+                local_path_text=str(form_payload.get("default_pocket_local_path") or ""),
+                required=False,
+            ),
+            _build_source_status_row(
+                label="default_catalytic_file",
+                uploaded_file=default_catalytic_upload,
+                local_path_text=str(form_payload.get("default_catalytic_local_path") or ""),
+                required=False,
+            ),
+            _build_source_status_row(
+                label="default_ligand_file",
+                uploaded_file=default_ligand_upload,
+                local_path_text=str(form_payload.get("default_ligand_local_path") or ""),
+                required=False,
+            ),
+        ]
+    )
+    st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
+
+    with st.expander("输入模板与格式说明"):
+        st.write("最常用的两种主输入格式如下。先下载模板填一版，再上传到本地软件即可。")
+        sample_col1, sample_col2 = st.columns(2)
+        sample_col1.download_button(
+            label="下载 input_csv 模板",
+            data=_build_sample_input_csv_text().encode("utf-8"),
+            file_name="input_pose_table_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        sample_col2.download_button(
+            label="下载 pose_features 模板",
+            data=_build_sample_feature_csv_text().encode("utf-8"),
+            file_name="pose_features_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.caption("input_csv 必需列: " + ", ".join(INPUT_CSV_REQUIRED_COLUMNS))
+        st.caption("pose_features.csv 最小必需列: " + ", ".join(FEATURE_CSV_REQUIRED_COLUMNS))
+        st.caption(
+            "如果用 zip 数据包导入，建议包内文件名尽量使用 "
+            "`input_pose_table.csv`、`pose_features.csv`、`pocket*`、`catalytic*`、`ligand*`，"
+            "这样页面可以自动识别并回填路径。"
+        )
+
+    last_bundle_import = st.session_state.get("last_bundle_import")
+    last_bundle_import_message = str(st.session_state.get("last_bundle_import_message") or "")
+    if last_bundle_import_message:
+        st.info(last_bundle_import_message)
+    if isinstance(last_bundle_import, dict):
+        st.caption(
+            f"最近导入数据包: {last_bundle_import.get('source_name', 'N/A')} | "
+            f"共解压 {int(last_bundle_import.get('file_count') or 0)} 个文件"
+        )
+        detected_items = last_bundle_import.get("detected_items")
+        if isinstance(detected_items, list) and detected_items:
+            st.dataframe(pd.DataFrame(detected_items), use_container_width=True, hide_index=True)
 
 
 def _try_relative_to(path: Path, base: Path) -> Path | None:
@@ -1012,6 +1640,7 @@ def _initialize_state() -> None:
     for key, value in FORM_DEFAULTS.items():
         st.session_state.setdefault(key, value)
 
+    st.session_state.setdefault("bundle_zip_local_path", "")
     st.session_state.setdefault("last_run_dir", None)
     st.session_state.setdefault("last_summary", None)
     st.session_state.setdefault("last_metadata", None)
@@ -1022,6 +1651,9 @@ def _initialize_state() -> None:
     st.session_state.setdefault("last_error", "")
     st.session_state.setdefault("last_export_bundle", None)
     st.session_state.setdefault("last_export_message", "")
+    st.session_state.setdefault("last_bundle_import", None)
+    st.session_state.setdefault("last_bundle_import_message", "")
+    st.session_state.setdefault("last_preflight", None)
 
 
 def _run_pipeline_from_form(
@@ -1225,6 +1857,12 @@ def main() -> None:
         )
         load_history_clicked = st.button("载入所选历史结果", use_container_width=True)
 
+        st.subheader("数据包导入")
+        bundle_zip_upload = st.file_uploader("上传 zip 数据包", type=["zip"], key="bundle_zip_upload")
+        st.text_input("或填写 zip 本地路径", key="bundle_zip_local_path")
+        bundle_import_clicked = st.button("导入并自动识别输入", use_container_width=True)
+        st.caption("适合把 CSV、PDB 和 pocket/catalytic/ligand 默认文件一起打包后一次导入。")
+
         st.subheader("主输入")
         input_csv_upload = None
         feature_csv_upload = None
@@ -1263,7 +1901,25 @@ def main() -> None:
         st.checkbox("skip_failed_rows", key="skip_failed_rows")
         st.checkbox("disable_label_aware_steps", key="disable_label_aware_steps")
 
-        run_clicked = st.button("运行推荐流程", use_container_width=True, type="primary")
+        current_start_mode = str(st.session_state.get("start_mode") or "input_csv")
+        run_ready = (
+            _source_present(input_csv_upload, str(st.session_state.get("input_csv_local_path") or ""))
+            if current_start_mode == "input_csv"
+            else _source_present(feature_csv_upload, str(st.session_state.get("feature_csv_local_path") or ""))
+        )
+        check_inputs_clicked = st.button(
+            "检查当前输入",
+            use_container_width=True,
+            disabled=not run_ready,
+        )
+        run_clicked = st.button(
+            "运行推荐流程",
+            use_container_width=True,
+            type="primary",
+            disabled=not run_ready,
+        )
+        if not run_ready:
+            st.caption("先提供当前启动方式所需的主输入 CSV，再执行检查或运行。")
 
     if save_template_clicked:
         template_name = str(st.session_state.get("template_name") or "").strip()
@@ -1287,6 +1943,20 @@ def main() -> None:
                 st.success(f"已载入模板: {selected_template_name}")
                 st.rerun()
 
+    if bundle_import_clicked:
+        try:
+            report = _import_input_bundle(
+                uploaded_file=bundle_zip_upload,
+                local_path_text=str(st.session_state.get("bundle_zip_local_path") or ""),
+            )
+            st.session_state["last_bundle_import"] = report
+            st.session_state["last_bundle_import_message"] = _apply_bundle_import(report)
+            st.session_state["last_preflight"] = None
+            st.success(st.session_state["last_bundle_import_message"])
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
     if load_history_clicked:
         selected_history_label = str(st.session_state.get("selected_history_label") or "").strip()
         run_root = history_label_to_path.get(selected_history_label)
@@ -1296,6 +1966,32 @@ def main() -> None:
             _load_history_run(run_root)
             st.success(f"已载入历史结果: {run_root.name}")
             st.rerun()
+
+    if check_inputs_clicked:
+        try:
+            preflight_report = _build_preflight_report(
+                start_mode=str(st.session_state.get("start_mode") or "input_csv"),
+                input_csv_upload=input_csv_upload,
+                feature_csv_upload=feature_csv_upload,
+                default_pocket_upload=default_pocket_upload,
+                default_catalytic_upload=default_catalytic_upload,
+                default_ligand_upload=default_ligand_upload,
+                form_payload=_build_form_payload(),
+            )
+            st.session_state["last_preflight"] = preflight_report
+            if str(preflight_report.get("status") or "") == "ready":
+                st.success("输入检查完成，当前配置可以开始运行。")
+            elif str(preflight_report.get("status") or "") == "warning":
+                st.warning("输入检查完成，存在提醒项，请查看下方“运行前检查”。")
+            else:
+                st.error("输入检查完成，发现阻塞问题，请先修正。")
+        except Exception as exc:
+            st.session_state["last_preflight"] = {
+                "checked_at": _now_text(),
+                "status": "error",
+                "messages": [str(exc)],
+            }
+            st.error(str(exc))
 
     if run_clicked:
         try:
@@ -1307,9 +2003,21 @@ def main() -> None:
                     default_catalytic_upload=default_catalytic_upload,
                     default_ligand_upload=default_ligand_upload,
                 )
+            st.session_state["last_preflight"] = None
             st.success("Pipeline 执行完成。")
         except Exception as exc:
             st.error(str(exc))
+
+    _render_input_status_panel(
+        start_mode=str(st.session_state.get("start_mode") or "input_csv"),
+        input_csv_upload=input_csv_upload,
+        feature_csv_upload=feature_csv_upload,
+        default_pocket_upload=default_pocket_upload,
+        default_catalytic_upload=default_catalytic_upload,
+        default_ligand_upload=default_ligand_upload,
+        form_payload=_build_form_payload(),
+    )
+    _render_preflight_report(st.session_state.get("last_preflight"))
 
     summary = st.session_state.get("last_summary")
     metadata = st.session_state.get("last_metadata")

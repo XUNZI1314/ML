@@ -232,7 +232,10 @@
 - 输出 `recommended_pipeline_report.md`，汇总本次执行了哪些步骤、关键指标和关键产物
 - 新增本地交互入口 [local_ml_app.py](local_ml_app.py)
 - 支持通过本地页面上传或直接指定本机文件路径
+- 支持导入单个 `zip` 数据包并自动识别 `input_csv` / `feature_csv` / `pocket` / `catalytic` / `ligand` 文件
+- 支持直接下载 `input_csv` 与 `pose_features.csv` 模板
 - 支持在页面中填写常用参数、执行推荐流程、预览排名和下载关键产物
+- 支持在正式运行前检查主输入必需列、label 状态和默认文件来源
 - 支持保存/载入参数模板，减少重复填写
 - 支持加载最近运行历史并恢复结果与表单参数
 - 支持在页面中输出失败诊断摘要，帮助快速定位输入路径/依赖/阶段性失败
@@ -514,12 +517,18 @@ start_local_app.bat
 - 不改现有 `build_feature_table.py` / `rule_ranker.py` / `train_pose_model.py` / `rank_nanobodies.py` 主链路
 - 页面里可选择从 `input_csv` 或 `pose_features.csv` 启动
 - 支持上传文件，也支持直接填写本机文件路径
+- 支持导入单个 zip 数据包，并自动回填 `input_csv` / `feature_csv` / 默认文件路径
+- 支持直接下载 `input_csv` / `pose_features.csv` 模板，减少手工整理格式
 - 支持填写常用参数：
   - `top_k`
   - `train_epochs`
   - `train_batch_size`
   - `train_val_ratio`
   - `seed`
+- 支持在运行前做输入预检：
+  - 检查必需列是否完整
+  - 检查 label 是否足够支持 compare/calibration
+  - 检查默认 `pocket/catalytic/ligand` 文件是否已有来源
 - 页面内部优先直接调用 [run_recommended_pipeline.py](run_recommended_pipeline.py) 暴露的函数入口
 - 同时保留 CLI 等价命令，便于复现和脱离 UI 独立执行
 - 运行后可在页面中预览：
