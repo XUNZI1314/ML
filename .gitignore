@@ -16,5 +16,6 @@ portable_dist/
 smoke_test_outputs*/
 recommended_pipeline_test*/
 annotation_export_test/outputs*/
+validation_tmp*/
 
 *.log

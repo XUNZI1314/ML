@@ -1974,6 +1974,71 @@ def _load_pdf_font(*, size: int, bold: bool = False) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+def _load_pdf_mono_font(*, size: int) -> ImageFont.ImageFont:
+    candidates: list[Path] = []
+    if os.name == "nt":
+        candidates.extend(
+            [
+                Path(r"C:\Windows\Fonts\consola.ttf"),
+                Path(r"C:\Windows\Fonts\cour.ttf"),
+                Path(r"C:\Windows\Fonts\lucon.ttf"),
+                Path(r"C:\Windows\Fonts\simhei.ttf"),
+            ]
+        )
+    else:
+        candidates.extend(
+            [
+                Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+                Path("/usr/share/fonts/truetype/liberation2/LiberationMono-Regular.ttf"),
+            ]
+        )
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            return ImageFont.truetype(str(path), size=size)
+        except Exception:
+            continue
+    return _load_pdf_font(size=size)
+
+
+def _normalize_pdf_section(section: dict[str, Any] | tuple[str, list[str]] | Any) -> dict[str, Any]:
+    if isinstance(section, dict):
+        normalized = dict(section)
+        normalized["title"] = str(section.get("title") or "Untitled")
+        normalized["kind"] = str(section.get("kind") or "text")
+        if isinstance(section.get("lines"), list):
+            normalized["lines"] = [str(item) for item in section.get("lines", [])]
+        if isinstance(section.get("items"), list):
+            normalized["items"] = [
+                (str(item[0]), item[1]) if isinstance(item, tuple) and len(item) == 2 else (str(item), "")
+                for item in section.get("items", [])
+            ]
+        normalized["columns"] = int(section.get("columns") or 2)
+        normalized["accent"] = str(section.get("accent") or "")
+        return normalized
+
+    if isinstance(section, tuple) and len(section) == 2:
+        title, lines = section
+        normalized_lines = [str(item) for item in lines] if isinstance(lines, list) else [str(lines)]
+        return {
+            "title": str(title),
+            "kind": "text",
+            "lines": normalized_lines,
+            "columns": 2,
+            "accent": "",
+        }
+
+    return {
+        "title": "Untitled",
+        "kind": "text",
+        "lines": [str(section)],
+        "columns": 2,
+        "accent": "",
+    }
+
+
 def _wrap_pdf_text(
     draw: ImageDraw.ImageDraw,
     text: str,
@@ -2040,28 +2105,65 @@ def _build_pdf_document(
     *,
     title: str,
     subtitle_lines: list[str],
-    sections: list[tuple[str, list[str]]],
+    sections: list[dict[str, Any] | tuple[str, list[str]]],
 ) -> Path:
     page_width = PDF_PAGE_WIDTH
     page_height = PDF_PAGE_HEIGHT
     margin = PDF_PAGE_MARGIN
 
-    title_font = _load_pdf_font(size=34, bold=True)
-    subtitle_font = _load_pdf_font(size=20)
+    title_font = _load_pdf_font(size=38, bold=True)
+    subtitle_font = _load_pdf_font(size=19)
     section_font = _load_pdf_font(size=24, bold=True)
     body_font = _load_pdf_font(size=18)
+    value_font = _load_pdf_font(size=24, bold=True)
+    label_font = _load_pdf_font(size=14)
+    mono_font = _load_pdf_mono_font(size=16)
     small_font = _load_pdf_font(size=16)
+    header_font = _load_pdf_font(size=15, bold=True)
+
+    accent_palette = [
+        ("#0d6a57", "#e3f0eb"),
+        ("#8f5a1f", "#f4e6d2"),
+        ("#275a8a", "#deebf7"),
+        ("#7c355d", "#f2deea"),
+        ("#5b6d1f", "#ebf1d8"),
+    ]
+    normalized_sections = [_normalize_pdf_section(section) for section in sections]
 
     images: list[Image.Image] = []
-    image = Image.new("RGB", (page_width, page_height), color="white")
+    current_page_number = 1
+    image = Image.new("RGB", (page_width, page_height), color="#f7f3ec")
     draw = ImageDraw.Draw(image)
     cursor_y = margin
 
+    def _init_page_canvas(target_draw: ImageDraw.ImageDraw, *, page_no: int) -> None:
+        target_draw.rectangle([(0, 0), (page_width, page_height)], fill="#f7f3ec")
+        target_draw.rectangle([(0, 0), (page_width, 18)], fill="#124d41")
+        target_draw.rectangle([(0, 18), (page_width, 52)], fill="#efe3cb")
+        target_draw.text((margin, 24), APP_NAME, font=header_font, fill="#124d41")
+        header_right = f"v{APP_VERSION} | PDF Export"
+        try:
+            header_width = target_draw.textlength(header_right, font=header_font)
+        except Exception:
+            header_width = len(header_right) * 8
+        target_draw.text((page_width - margin - int(header_width), 24), header_right, font=header_font, fill="#124d41")
+        page_label = f"Page {page_no}"
+        try:
+            label_width = target_draw.textlength(page_label, font=small_font)
+        except Exception:
+            label_width = len(page_label) * 8
+        target_draw.text((page_width - margin - int(label_width), page_height - margin + 10), page_label, font=small_font, fill="#6b716d")
+        target_draw.line([(margin, page_height - margin + 2), (page_width - margin, page_height - margin + 2)], fill="#d8cfbf", width=1)
+
+    _init_page_canvas(draw, page_no=current_page_number)
+
     def start_new_page() -> None:
-        nonlocal image, draw, cursor_y
+        nonlocal image, draw, cursor_y, current_page_number
         images.append(image)
-        image = Image.new("RGB", (page_width, page_height), color="white")
+        current_page_number += 1
+        image = Image.new("RGB", (page_width, page_height), color="#f7f3ec")
         draw = ImageDraw.Draw(image)
+        _init_page_canvas(draw, page_no=current_page_number)
         cursor_y = margin
 
     def ensure_space(height: int) -> None:
@@ -2069,38 +2171,209 @@ def _build_pdf_document(
         if cursor_y + int(height) > page_height - margin:
             start_new_page()
 
-    def render_wrapped_lines(lines: list[str], *, font: ImageFont.ImageFont, fill: str, line_spacing: int) -> None:
-        nonlocal cursor_y
-        max_width = page_width - margin * 2
-        for raw_line in lines:
-            wrapped_lines = _wrap_pdf_text(draw, raw_line, font=font, max_width=max_width)
-            for wrapped_line in wrapped_lines:
-                ensure_space(line_spacing)
-                draw.text((margin, cursor_y), wrapped_line, font=font, fill=fill)
-                cursor_y += line_spacing
+    def flatten_wrapped_lines(lines: list[str], *, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+        flattened: list[str] = []
+        for raw_line in lines or [""]:
+            flattened.extend(_wrap_pdf_text(draw, raw_line, font=font, max_width=max_width))
+        return flattened or [""]
 
+    def estimate_section_height(section: dict[str, Any]) -> int:
+        inner_width = page_width - margin * 2 - 40
+        title_height = 70
+        kind = str(section.get("kind") or "text")
+        if kind == "metrics":
+            items = section.get("items") if isinstance(section.get("items"), list) else []
+            columns = max(1, min(3, int(section.get("columns") or 2)))
+            rows = max(1, (len(items) + columns - 1) // columns)
+            return title_height + rows * 108 + max(0, rows - 1) * 14 + 26
+        if kind == "table":
+            table_lines = flatten_wrapped_lines(section.get("lines") or ["暂无内容。"], font=mono_font, max_width=inner_width - 28)
+            return title_height + len(table_lines) * 22 + 36
+        if kind == "bullets":
+            bullet_count = 0
+            for line in section.get("lines") or ["暂无内容。"]:
+                bullet_count += len(_wrap_pdf_text(draw, line, font=body_font, max_width=inner_width - 30))
+            return title_height + max(1, bullet_count) * 24 + 24
+        text_lines = flatten_wrapped_lines(section.get("lines") or ["暂无内容。"], font=body_font, max_width=inner_width)
+        return title_height + len(text_lines) * 24 + 24
+
+    def render_metric_section(section: dict[str, Any], *, left: int, top: int, accent: str, accent_soft: str) -> int:
+        content_width = page_width - margin * 2 - 40
+        columns = max(1, min(3, int(section.get("columns") or 2)))
+        gap = 14
+        card_width = int((content_width - gap * (columns - 1)) / columns)
+        card_height = 108
+        items = section.get("items") if isinstance(section.get("items"), list) else []
+        items = items or [("N/A", "暂无内容")]
+        x0 = left + 20
+        y0 = top + 64
+        for index, item in enumerate(items):
+            row = index // columns
+            col = index % columns
+            card_left = x0 + col * (card_width + gap)
+            card_top = y0 + row * (card_height + gap)
+            card_right = card_left + card_width
+            card_bottom = card_top + card_height
+            fill = "#ffffff" if index % 2 == 0 else accent_soft
+            draw.rounded_rectangle(
+                [(card_left, card_top), (card_right, card_bottom)],
+                radius=18,
+                fill=fill,
+                outline="#ddd2c1",
+                width=1,
+            )
+            label, value = item
+            label_lines = _wrap_pdf_text(draw, str(label), font=label_font, max_width=card_width - 24)
+            value_lines = _wrap_pdf_text(draw, _metric_text(value), font=value_font, max_width=card_width - 24)
+            label_y = card_top + 14
+            for line in label_lines[:2]:
+                draw.text((card_left + 12, label_y), line, font=label_font, fill="#6b716d")
+                label_y += 18
+            value_y = card_top + 48
+            for line in value_lines[:2]:
+                draw.text((card_left + 12, value_y), line, font=value_font, fill=accent)
+                value_y += 28
+        rows = max(1, (len(items) + columns - 1) // columns)
+        return top + 64 + rows * card_height + max(0, rows - 1) * gap + 18
+
+    def render_bullet_section(section: dict[str, Any], *, left: int, top: int, accent: str) -> int:
+        y = top + 62
+        max_width = page_width - margin * 2 - 70
+        for raw_line in section.get("lines") or ["暂无内容。"]:
+            wrapped = _wrap_pdf_text(draw, raw_line, font=body_font, max_width=max_width)
+            bullet_center_y = y + 11
+            draw.ellipse([(left + 22, bullet_center_y - 4), (left + 30, bullet_center_y + 4)], fill=accent)
+            for line_index, line in enumerate(wrapped):
+                text_x = left + 40
+                draw.text((text_x, y), line, font=body_font, fill="#1f2421")
+                y += 24
+                if line_index == 0:
+                    bullet_center_y = y
+            y += 4
+        return y + 8
+
+    def render_table_section(section: dict[str, Any], *, left: int, top: int, accent_soft: str) -> int:
+        y = top + 62
+        box_left = left + 18
+        box_top = y
+        box_right = page_width - margin - 18
+        content_width = box_right - box_left - 20
+        table_lines = flatten_wrapped_lines(section.get("lines") or ["暂无内容。"], font=mono_font, max_width=content_width)
+        table_height = len(table_lines) * 22 + 22
+        draw.rounded_rectangle(
+            [(box_left, box_top), (box_right, box_top + table_height)],
+            radius=16,
+            fill=accent_soft,
+            outline="#d6cdbf",
+            width=1,
+        )
+        current_y = box_top + 12
+        for index, line in enumerate(table_lines):
+            draw.text((box_left + 10, current_y), line, font=mono_font, fill="#2a2f2c")
+            current_y += 22
+            if index < len(table_lines) - 1:
+                draw.line([(box_left + 8, current_y - 4), (box_right - 8, current_y - 4)], fill="#e7dece", width=1)
+        return box_top + table_height + 14
+
+    def render_text_section(section: dict[str, Any], *, left: int, top: int) -> int:
+        y = top + 62
+        max_width = page_width - margin * 2 - 40
+        text_lines = flatten_wrapped_lines(section.get("lines") or ["暂无内容。"], font=body_font, max_width=max_width)
+        for line in text_lines:
+            draw.text((left + 20, y), line, font=body_font, fill="#1f2421")
+            y += 24
+        return y + 8
+
+    hero_bottom = margin + 170
     draw.rounded_rectangle(
-        [(margin, margin), (page_width - margin, margin + 130)],
-        radius=24,
+        [(margin, margin), (page_width - margin, hero_bottom)],
+        radius=30,
         fill="#1f4f43",
     )
-    cursor_y = margin + 18
-    draw.text((margin + 22, cursor_y), title, font=title_font, fill="#fffaf0")
-    cursor_y += 48
-    render_wrapped_lines(subtitle_lines, font=subtitle_font, fill="#f7efe1", line_spacing=28)
-    cursor_y = margin + 150
+    draw.rounded_rectangle(
+        [(page_width - margin - 210, margin + 18), (page_width - margin - 24, margin + 60)],
+        radius=18,
+        fill="#2c6658",
+    )
+    draw.text((page_width - margin - 192, margin + 28), f"v{APP_VERSION}", font=subtitle_font, fill="#f7efe1")
+    cursor_y = margin + 22
+    draw.text((margin + 24, cursor_y), title, font=title_font, fill="#fffaf0")
+    cursor_y += 54
+    chip_x = margin + 24
+    chip_y = cursor_y
+    for subtitle in subtitle_lines:
+        chip_text = str(subtitle)
+        try:
+            chip_width = int(draw.textlength(chip_text, font=subtitle_font)) + 28
+        except Exception:
+            chip_width = len(chip_text) * 12 + 28
+        if chip_x + chip_width > page_width - margin - 24:
+            chip_x = margin + 24
+            chip_y += 38
+        draw.rounded_rectangle(
+            [(chip_x, chip_y), (chip_x + chip_width, chip_y + 28)],
+            radius=14,
+            fill="#2c6658",
+        )
+        draw.text((chip_x + 14, chip_y + 5), chip_text, font=subtitle_font, fill="#f7efe1")
+        chip_x += chip_width + 10
+    cursor_y = max(hero_bottom + 12, chip_y + 52)
 
-    for section_title, section_lines in sections:
-        ensure_space(40)
-        draw.text((margin, cursor_y), section_title, font=section_font, fill="#0d6a57")
-        cursor_y += 36
-        render_wrapped_lines(section_lines or ["暂无内容。"], font=body_font, fill="#1f2421", line_spacing=26)
-        cursor_y += 14
+    for section_index, section in enumerate(normalized_sections):
+        section_height = estimate_section_height(section)
+        ensure_space(section_height + 12)
+        accent, accent_soft = accent_palette[section_index % len(accent_palette)]
+        if section.get("accent"):
+            accent = str(section.get("accent"))
+        card_left = margin
+        card_top = cursor_y
+        card_right = page_width - margin
+        card_bottom = card_top + section_height
+        draw.rounded_rectangle(
+            [(card_left, card_top), (card_right, card_bottom)],
+            radius=24,
+            fill="#fffdf8",
+            outline="#d8cfbf",
+            width=1,
+        )
+        draw.rounded_rectangle(
+            [(card_left, card_top), (card_right, card_top + 52)],
+            radius=24,
+            fill=accent_soft,
+        )
+        draw.rectangle([(card_left, card_top + 26), (card_right, card_top + 52)], fill=accent_soft)
+        draw.rounded_rectangle(
+            [(card_left + 18, card_top + 14), (card_left + 26, card_top + 40)],
+            radius=4,
+            fill=accent,
+        )
+        draw.text((card_left + 38, card_top + 12), str(section.get("title") or "Untitled"), font=section_font, fill=accent)
 
-    footer_text = f"{APP_NAME} | v{APP_VERSION} | Generated at {_now_text()}"
-    ensure_space(28)
-    draw.text((margin, min(cursor_y, page_height - margin)), footer_text, font=small_font, fill="#6b716d")
+        kind = str(section.get("kind") or "text")
+        if kind == "metrics":
+            content_bottom = render_metric_section(section, left=card_left, top=card_top, accent=accent, accent_soft=accent_soft)
+        elif kind == "bullets":
+            content_bottom = render_bullet_section(section, left=card_left, top=card_top, accent=accent)
+        elif kind == "table":
+            content_bottom = render_table_section(section, left=card_left, top=card_top, accent_soft=accent_soft)
+        else:
+            content_bottom = render_text_section(section, left=card_left, top=card_top)
+
+        cursor_y = max(card_bottom, content_bottom) + 14
+
     images.append(image)
+
+    total_pages = len(images)
+    footer_text = f"{APP_NAME} | v{APP_VERSION} | Generated at {_now_text()}"
+    for page_index, page_image in enumerate(images, start=1):
+        page_draw = ImageDraw.Draw(page_image)
+        page_draw.text((margin, page_height - margin + 10), footer_text, font=small_font, fill="#6b716d")
+        page_label = f"Page {page_index}/{total_pages}"
+        try:
+            label_width = page_draw.textlength(page_label, font=small_font)
+        except Exception:
+            label_width = len(page_label) * 8
+        page_draw.text((page_width - margin - int(label_width), page_height - margin + 10), page_label, font=small_font, fill="#6b716d")
 
     rgb_images = [img.convert("RGB") for img in images]
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2367,71 +2640,80 @@ def _create_pdf_summary_export(
         f"版本: v{APP_VERSION}",
         f"生成时间: {_now_text()}",
     ]
-    sections: list[tuple[str, list[str]]] = [
-        (
-            "核心摘要",
-            [
-                f"Start Mode: {summary.get('start_mode', 'N/A')}",
-                f"Status: {metadata.get('status', 'N/A')}",
-                f"Execution Mode: {metadata.get('execution_mode', 'N/A')}",
-                f"Valid Labels: {summary.get('label_valid_count', 0)}",
-                f"Label Classes: {summary.get('label_class_count', 0)}",
-                f"Calibration Possible: {summary.get('calibration_possible', False)}",
-                f"Output Dir: {out_dir or 'N/A'}",
+    sections: list[dict[str, Any] | tuple[str, list[str]]] = [
+        {
+            "title": "核心摘要",
+            "kind": "metrics",
+            "columns": 2,
+            "items": [
+                ("Start Mode", summary.get("start_mode", "N/A")),
+                ("Status", metadata.get("status", "N/A")),
+                ("Execution Mode", metadata.get("execution_mode", "N/A")),
+                ("Valid Labels", summary.get("label_valid_count", 0)),
+                ("Label Classes", summary.get("label_class_count", 0)),
+                ("Calibration", "Yes" if bool(summary.get("calibration_possible", False)) else "No"),
             ],
-        ),
-        (
-            "规则 vs ML 对照",
-            [
-                f"Baseline Rank Spearman: {_metric_text(baseline.get('rank_spearman'))}",
-                f"Baseline Rule AUC: {_metric_text(baseline.get('rule_auc'))}",
-                f"Calibrated Rank Spearman: {_metric_text(calibrated.get('rank_spearman'))}",
-                f"Calibrated Rule AUC: {_metric_text(calibrated.get('rule_auc'))}",
+        },
+        {
+            "title": "规则 vs ML 对照",
+            "kind": "metrics",
+            "columns": 2,
+            "items": [
+                ("Baseline Rank Spearman", baseline.get("rank_spearman")),
+                ("Baseline Rule AUC", baseline.get("rule_auc")),
+                ("Calibrated Rank Spearman", calibrated.get("rank_spearman")),
+                ("Calibrated Rule AUC", calibrated.get("rule_auc")),
             ],
-        ),
-        (
-            "训练摘要",
-            [
-                f"Training Mode: {training_payload.get('mode', 'N/A') if isinstance(training_payload, dict) else 'N/A'}",
-                f"Train Rows: {training_payload.get('n_rows_train', training_summary.get('train_size', 'N/A')) if isinstance(training_payload, dict) else 'N/A'}",
-                f"Val Rows: {training_payload.get('n_rows_val', training_summary.get('val_size', 'N/A')) if isinstance(training_payload, dict) else 'N/A'}",
-                f"Feature Count: {training_payload.get('n_features', 'N/A') if isinstance(training_payload, dict) else 'N/A'}",
-                f"Best Epoch: {training_summary.get('best_epoch', 'N/A')}",
-                f"Best Val Loss: {_metric_text(training_summary.get('best_val_loss'))}",
-                f"Pseudo Positive Rate: {_metric_text(pseudo_block.get('pseudo_positive_rate', pseudo_distribution.get('pseudo_positive_rate')))}",
+        },
+        {
+            "title": "训练摘要",
+            "kind": "metrics",
+            "columns": 2,
+            "items": [
+                ("Training Mode", training_payload.get("mode", "N/A") if isinstance(training_payload, dict) else "N/A"),
+                ("Train Rows", training_payload.get("n_rows_train", training_summary.get("train_size", "N/A")) if isinstance(training_payload, dict) else "N/A"),
+                ("Val Rows", training_payload.get("n_rows_val", training_summary.get("val_size", "N/A")) if isinstance(training_payload, dict) else "N/A"),
+                ("Feature Count", training_payload.get("n_features", "N/A") if isinstance(training_payload, dict) else "N/A"),
+                ("Best Epoch", training_summary.get("best_epoch", "N/A")),
+                ("Best Val Loss", training_summary.get("best_val_loss")),
+                ("Pseudo Positive Rate", pseudo_block.get("pseudo_positive_rate", pseudo_distribution.get("pseudo_positive_rate"))),
+                ("Output Dir", str(out_dir or "N/A")),
             ],
-        ),
-        (
-            "Feature QC / Warning",
-            [
-                f"Total Rows: {processing_summary.get('total_rows', 'N/A')}",
-                f"OK Rows: {processing_summary.get('ok_rows', 'N/A')}",
-                f"Failed Rows: {processing_summary.get('failed_rows', 'N/A')}",
-                f"Rows With Warning: {processing_summary.get('rows_with_warning_message', 'N/A')}",
+        },
+        {
+            "title": "Feature QC / Warning",
+            "kind": "metrics",
+            "columns": 2,
+            "items": [
+                ("Total Rows", processing_summary.get("total_rows", "N/A")),
+                ("OK Rows", processing_summary.get("ok_rows", "N/A")),
+                ("Failed Rows", processing_summary.get("failed_rows", "N/A")),
+                ("Rows With Warning", processing_summary.get("rows_with_warning_message", "N/A")),
             ],
-        ),
+        },
     ]
 
     if notes:
-        sections.append(("执行备注", [str(note) for note in notes]))
+        sections.append({"title": "执行备注", "kind": "bullets", "lines": [str(note) for note in notes]})
 
     diag_messages = diagnostics.get("messages") if isinstance(diagnostics.get("messages"), list) else []
     diag_suggestions = diagnostics.get("suggestions") if isinstance(diagnostics.get("suggestions"), list) else []
     if diag_messages or diag_suggestions:
         sections.append(
-            (
-                "诊断摘要",
-                [*(f"消息: {item}" for item in diag_messages), *(f"建议: {item}" for item in diag_suggestions)],
-            )
+            {
+                "title": "诊断摘要",
+                "kind": "bullets",
+                "lines": [*(f"消息: {item}" for item in diag_messages), *(f"建议: {item}" for item in diag_suggestions)],
+            }
         )
 
-    sections.append(("ML 排名预览", _df_to_pdf_lines(ml_df, max_rows=10, max_cols=6)))
-    sections.append(("Rule 排名预览", _df_to_pdf_lines(rule_df, max_rows=10, max_cols=6)))
+    sections.append({"title": "ML 排名预览", "kind": "table", "lines": _df_to_pdf_lines(ml_df, max_rows=10, max_cols=6)})
+    sections.append({"title": "Rule 排名预览", "kind": "table", "lines": _df_to_pdf_lines(rule_df, max_rows=10, max_cols=6)})
 
     report_lines = report_text.splitlines()[:60] if report_text else ["当前没有 execution report。"]
     if report_text and len(report_text.splitlines()) > 60:
         report_lines.append(f"... 省略 {len(report_text.splitlines()) - 60} 行")
-    sections.append(("执行报告 Markdown 摘要", report_lines))
+    sections.append({"title": "执行报告 Markdown 摘要", "kind": "table", "lines": report_lines})
 
     return _build_pdf_document(
         pdf_path,
@@ -3220,22 +3502,42 @@ def _create_history_compare_pdf_export(
         f"主指标: {metric_label} ({'越高越好' if higher_is_better else '越低越好'})",
         f"生成时间: {_now_text()}",
     ]
-    sections: list[tuple[str, list[str]]] = [
-        (
-            "对比摘要",
-            [
-                f"Compared Runs: {len(compare_df)}",
-                f"Baseline Run: {baseline_run_name}",
-                f"Leader Run: {leader_name or 'N/A'}",
-                f"Leader Value: {_metric_text(leader_value)}",
-                f"Primary Metric Key: {metric_key}",
+    clean_mask = (
+        compare_df["status"].astype(str).str.lower().eq("success")
+        & pd.to_numeric(compare_df.get("failed_rows"), errors="coerce").fillna(0).eq(0)
+        & pd.to_numeric(compare_df.get("warning_rows"), errors="coerce").fillna(0).eq(0)
+    )
+    sections: list[dict[str, Any] | tuple[str, list[str]]] = [
+        {
+            "title": "对比摘要",
+            "kind": "metrics",
+            "columns": 2,
+            "items": [
+                ("Compared Runs", len(compare_df)),
+                ("Clean Runs", int(clean_mask.sum())),
+                ("Baseline Run", baseline_run_name),
+                ("Leader Run", leader_name or "N/A"),
+                ("Leader Value", leader_value),
+                ("Primary Metric", metric_label),
             ],
-        ),
-        ("选中的运行", selected_lines or ["当前没有选中运行。"]),
-        ("Run-to-Run 差异解释", insight_lines or ["当前没有可用的差异解释。"]),
-        ("趋势快照", _df_to_pdf_lines(trend_df, max_rows=max(20, len(trend_df) if isinstance(trend_df, pd.DataFrame) else 20), max_cols=6)),
-        ("相对基准的差异表", _df_to_pdf_lines(delta_df, max_rows=max(20, len(delta_df) if isinstance(delta_df, pd.DataFrame) else 20), max_cols=10)),
-        ("完整对比表", _df_to_pdf_lines(compare_df, max_rows=max(20, len(compare_df)), max_cols=10)),
+        },
+        {"title": "选中的运行", "kind": "bullets", "lines": selected_lines or ["当前没有选中运行。"]},
+        {"title": "Run-to-Run 差异解释", "kind": "bullets", "lines": insight_lines or ["当前没有可用的差异解释。"]},
+        {
+            "title": "趋势快照",
+            "kind": "table",
+            "lines": _df_to_pdf_lines(trend_df, max_rows=max(20, len(trend_df) if isinstance(trend_df, pd.DataFrame) else 20), max_cols=6),
+        },
+        {
+            "title": "相对基准的差异表",
+            "kind": "table",
+            "lines": _df_to_pdf_lines(delta_df, max_rows=max(20, len(delta_df) if isinstance(delta_df, pd.DataFrame) else 20), max_cols=10),
+        },
+        {
+            "title": "完整对比表",
+            "kind": "table",
+            "lines": _df_to_pdf_lines(compare_df, max_rows=max(20, len(compare_df)), max_cols=10),
+        },
     ]
 
     csv_path = export_dir / "history_compare_table.csv"
