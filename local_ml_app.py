@@ -1041,6 +1041,95 @@ def _format_byte_count(byte_count: int) -> str:
     return "N/A"
 
 
+def _pick_default_view_columns(
+    df: pd.DataFrame,
+    *,
+    preferred_columns: list[str] | None = None,
+    max_columns: int = 12,
+) -> list[str]:
+    if df.empty:
+        return []
+    preferred = [column for column in (preferred_columns or []) if column in df.columns]
+    if preferred:
+        return preferred
+    return [str(column) for column in df.columns[: min(int(max_columns), len(df.columns))]]
+
+
+def _apply_dataframe_view(
+    df: pd.DataFrame,
+    *,
+    visible_columns: list[str] | None = None,
+    sort_column: str = "",
+    descending: bool = True,
+) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+
+    working_df = df.copy()
+    sort_key = str(sort_column or "").strip()
+    if sort_key and sort_key in working_df.columns:
+        working_df = working_df.sort_values(
+            by=sort_key,
+            ascending=not descending,
+            kind="stable",
+            na_position="last",
+        )
+
+    selected_columns = [str(column) for column in (visible_columns or []) if column in working_df.columns]
+    if not selected_columns:
+        selected_columns = [str(column) for column in working_df.columns]
+    return working_df.loc[:, selected_columns]
+
+
+def _render_dataframe_view_controls(
+    df: pd.DataFrame,
+    *,
+    key_prefix: str,
+    preferred_columns: list[str] | None = None,
+    default_sort_column: str = "",
+    default_descending: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if df.empty:
+        return df.copy(), df.copy()
+
+    default_columns = _pick_default_view_columns(df, preferred_columns=preferred_columns)
+    visible_columns = st.multiselect(
+        "显示列",
+        options=[str(column) for column in df.columns],
+        default=default_columns,
+        key=f"{key_prefix}_visible_columns",
+    )
+    sort_options = [""] + [str(column) for column in df.columns]
+    initial_sort_column = (
+        str(default_sort_column)
+        if str(default_sort_column or "") in df.columns
+        else (str(default_columns[0]) if default_columns else "")
+    )
+    sort_column = st.selectbox(
+        "排序列",
+        options=sort_options,
+        index=sort_options.index(initial_sort_column) if initial_sort_column in sort_options else 0,
+        key=f"{key_prefix}_sort_column",
+    )
+    sort_descending = st.checkbox(
+        "降序排列",
+        value=bool(default_descending),
+        key=f"{key_prefix}_sort_descending",
+    )
+    view_df = _apply_dataframe_view(
+        df,
+        visible_columns=[str(column) for column in visible_columns],
+        sort_column=str(sort_column or ""),
+        descending=bool(sort_descending),
+    )
+    return view_df, _apply_dataframe_view(
+        df,
+        visible_columns=[str(column) for column in df.columns],
+        sort_column=str(sort_column or ""),
+        descending=bool(sort_descending),
+    )
+
+
 def _count_label_stats(df: pd.DataFrame, label_col: str = "label") -> dict[str, Any]:
     if label_col not in df.columns:
         return {
@@ -5816,15 +5905,43 @@ def main() -> None:
                                 na=False,
                             )
                         ]
-                    st.caption(f"共 {len(ml_df)} 条，当前展示前 {min(int(ranking_preview_rows), len(ml_df))} 条。")
-                    st.dataframe(ml_df.head(int(ranking_preview_rows)), use_container_width=True)
-                    st.download_button(
-                        label="下载当前 ML 筛选结果 CSV",
-                        data=ml_df.to_csv(index=False).encode("utf-8"),
+                    ml_view_df, ml_export_df = _render_dataframe_view_controls(
+                        ml_df,
+                        key_prefix="ml_ranking_view",
+                        preferred_columns=[
+                            "nanobody_id",
+                            "final_score",
+                            "best_conformer_score",
+                            "mean_conformer_score",
+                            "pocket_consistency_score",
+                            "std_conformer_score",
+                            "top_conformer_id",
+                            "explanation",
+                        ],
+                        default_sort_column="final_score",
+                        default_descending=True,
+                    )
+                    st.caption(
+                        f"当前筛选后共 {len(ml_export_df)} 条，当前展示前 {min(int(ranking_preview_rows), len(ml_view_df))} 条；"
+                        f"可见列 {len(ml_view_df.columns)} 个。"
+                    )
+                    st.dataframe(ml_view_df.head(int(ranking_preview_rows)), use_container_width=True)
+                    ml_download_col1, ml_download_col2 = st.columns(2)
+                    ml_download_col1.download_button(
+                        label="下载当前 ML 可见视图 CSV",
+                        data=ml_view_df.to_csv(index=False).encode("utf-8"),
                         file_name="ml_ranking_filtered.csv",
                         mime="text/csv",
                         use_container_width=True,
                         key="download_filtered_ml_ranking_csv",
+                    )
+                    ml_download_col2.download_button(
+                        label="下载当前 ML 全筛选结果 CSV",
+                        data=ml_export_df.to_csv(index=False).encode("utf-8"),
+                        file_name="ml_ranking_filtered_full.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_full_ml_ranking_csv",
                     )
 
             if rule_ranking_csv is not None and rule_ranking_csv.exists():
@@ -5840,15 +5957,43 @@ def main() -> None:
                                 na=False,
                             )
                         ]
-                    st.caption(f"共 {len(rule_df)} 条，当前展示前 {min(int(ranking_preview_rows), len(rule_df))} 条。")
-                    st.dataframe(rule_df.head(int(ranking_preview_rows)), use_container_width=True)
-                    st.download_button(
-                        label="下载当前 Rule 筛选结果 CSV",
-                        data=rule_df.to_csv(index=False).encode("utf-8"),
+                    rule_view_df, rule_export_df = _render_dataframe_view_controls(
+                        rule_df,
+                        key_prefix="rule_ranking_view",
+                        preferred_columns=[
+                            "nanobody_id",
+                            "final_rule_score",
+                            "best_conformer_rule_score",
+                            "mean_conformer_rule_score",
+                            "pocket_consistency_score",
+                            "std_conformer_rule_score",
+                            "top_conformer_id",
+                            "explanation",
+                        ],
+                        default_sort_column="final_rule_score",
+                        default_descending=True,
+                    )
+                    st.caption(
+                        f"当前筛选后共 {len(rule_export_df)} 条，当前展示前 {min(int(ranking_preview_rows), len(rule_view_df))} 条；"
+                        f"可见列 {len(rule_view_df.columns)} 个。"
+                    )
+                    st.dataframe(rule_view_df.head(int(ranking_preview_rows)), use_container_width=True)
+                    rule_download_col1, rule_download_col2 = st.columns(2)
+                    rule_download_col1.download_button(
+                        label="下载当前 Rule 可见视图 CSV",
+                        data=rule_view_df.to_csv(index=False).encode("utf-8"),
                         file_name="rule_ranking_filtered.csv",
                         mime="text/csv",
                         use_container_width=True,
                         key="download_filtered_rule_ranking_csv",
+                    )
+                    rule_download_col2.download_button(
+                        label="下载当前 Rule 全筛选结果 CSV",
+                        data=rule_export_df.to_csv(index=False).encode("utf-8"),
+                        file_name="rule_ranking_filtered_full.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_full_rule_ranking_csv",
                     )
 
     with tab_pose:
@@ -5869,12 +6014,9 @@ def main() -> None:
                 key="pose_preview_rows",
             )
             pose_filter_text = str(st.text_input("按 nanobody_id / conformer_id / pose_id 过滤", key="pose_filter_text") or "").strip()
-            pose_sort_desc = st.checkbox("按 pred_prob 降序显示", value=True, key="pose_sort_desc")
             if pose_pred_csv is not None and pose_pred_csv.exists():
                 pose_df = _load_csv(pose_pred_csv)
                 if pose_df is not None:
-                    if pose_sort_desc and "pred_prob" in pose_df.columns:
-                        pose_df = pose_df.sort_values("pred_prob", ascending=False, kind="stable")
                     if pose_filter_text:
                         mask = pd.Series(False, index=pose_df.index)
                         for column in ["nanobody_id", "conformer_id", "pose_id"]:
@@ -5886,15 +6028,45 @@ def main() -> None:
                                     na=False,
                                 )
                         pose_df = pose_df[mask]
-                    st.caption(f"共 {len(pose_df)} 条，当前展示前 {min(int(pose_preview_rows), len(pose_df))} 条。")
-                    st.dataframe(pose_df.head(int(pose_preview_rows)), use_container_width=True)
-                    st.download_button(
-                        label="下载当前 Pose 筛选结果 CSV",
-                        data=pose_df.to_csv(index=False).encode("utf-8"),
+                    pose_view_df, pose_export_df = _render_dataframe_view_controls(
+                        pose_df,
+                        key_prefix="pose_view",
+                        preferred_columns=[
+                            "nanobody_id",
+                            "conformer_id",
+                            "pose_id",
+                            "pred_prob",
+                            "pred_logit",
+                            "pseudo_label",
+                            "pocket_hit_fraction",
+                            "catalytic_hit_fraction",
+                            "mouth_occlusion_score",
+                            "top_contributing_features",
+                        ],
+                        default_sort_column="pred_prob",
+                        default_descending=True,
+                    )
+                    st.caption(
+                        f"当前筛选后共 {len(pose_export_df)} 条，当前展示前 {min(int(pose_preview_rows), len(pose_view_df))} 条；"
+                        f"可见列 {len(pose_view_df.columns)} 个。"
+                    )
+                    st.dataframe(pose_view_df.head(int(pose_preview_rows)), use_container_width=True)
+                    pose_download_col1, pose_download_col2 = st.columns(2)
+                    pose_download_col1.download_button(
+                        label="下载当前 Pose 可见视图 CSV",
+                        data=pose_view_df.to_csv(index=False).encode("utf-8"),
                         file_name="pose_predictions_filtered.csv",
                         mime="text/csv",
                         use_container_width=True,
                         key="download_filtered_pose_csv",
+                    )
+                    pose_download_col2.download_button(
+                        label="下载当前 Pose 全筛选结果 CSV",
+                        data=pose_export_df.to_csv(index=False).encode("utf-8"),
+                        file_name="pose_predictions_filtered_full.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_full_pose_csv",
                     )
             else:
                 st.info("当前没有 pose_predictions.csv。")
