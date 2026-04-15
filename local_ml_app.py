@@ -1733,6 +1733,13 @@ def _metric_text(value: Any) -> str:
         return text or "N/A"
 
 
+def _ratio_text(value: Any) -> str:
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
 def _load_feature_qc_payload(
     summary: dict[str, Any] | None,
     metadata: dict[str, Any] | None = None,
@@ -3562,6 +3569,162 @@ def _build_compare_insight_lines(
     return insight_lines
 
 
+def _build_compare_batch_trend_table(
+    compare_df: pd.DataFrame,
+    *,
+    metric_key: str,
+) -> pd.DataFrame:
+    if compare_df.empty:
+        return pd.DataFrame()
+
+    working_df = compare_df.copy()
+    working_df["_original_order"] = list(range(len(working_df)))
+    working_df["_started_at_dt"] = pd.to_datetime(working_df.get("started_at"), errors="coerce")
+    working_df["_batch_dt"] = working_df["_started_at_dt"].dt.normalize()
+    working_df["_batch_label"] = working_df["_batch_dt"].dt.strftime("%Y-%m-%d")
+    working_df["_batch_label"] = working_df["_batch_label"].fillna("unknown_batch")
+    working_df["_status_success"] = working_df["status"].astype(str).str.lower().eq("success")
+    working_df["_failed_rows_num"] = pd.to_numeric(working_df.get("failed_rows"), errors="coerce").fillna(0.0)
+    working_df["_warning_rows_num"] = pd.to_numeric(working_df.get("warning_rows"), errors="coerce").fillna(0.0)
+    working_df["_clean_run"] = (
+        working_df["_status_success"]
+        & working_df["_failed_rows_num"].eq(0)
+        & working_df["_warning_rows_num"].eq(0)
+    )
+    working_df["_primary_metric_num"] = pd.to_numeric(working_df.get(metric_key), errors="coerce")
+    working_df["_best_val_loss_num"] = pd.to_numeric(working_df.get("best_val_loss"), errors="coerce")
+    working_df = working_df.sort_values(
+        by=["_batch_dt", "_started_at_dt", "_original_order"],
+        ascending=[True, True, True],
+        na_position="last",
+    )
+    higher_is_better = _is_higher_better_compare_metric(metric_key)
+
+    rows: list[dict[str, Any]] = []
+    for batch_label, batch_group in working_df.groupby("_batch_label", sort=False, dropna=False):
+        primary_series = batch_group["_primary_metric_num"].dropna()
+        best_val_loss_series = batch_group["_best_val_loss_num"].dropna()
+        batch_start = batch_group["_started_at_dt"].min()
+        batch_end = batch_group["_started_at_dt"].max()
+        run_names = batch_group["run_name"].astype(str).tolist()
+        run_count = len(batch_group)
+        success_runs = int(batch_group["_status_success"].sum())
+        clean_runs = int(batch_group["_clean_run"].sum())
+
+        rows.append(
+            {
+                "batch_label": str(batch_label or "unknown_batch"),
+                "batch_start": (
+                    batch_start.strftime("%Y-%m-%d %H:%M:%S")
+                    if pd.notna(batch_start)
+                    else "N/A"
+                ),
+                "batch_end": (
+                    batch_end.strftime("%Y-%m-%d %H:%M:%S")
+                    if pd.notna(batch_end)
+                    else "N/A"
+                ),
+                "run_count": run_count,
+                "success_runs": success_runs,
+                "clean_runs": clean_runs,
+                "success_rate": (success_runs / run_count) if run_count else None,
+                "clean_rate": (clean_runs / run_count) if run_count else None,
+                "primary_metric_mean": (
+                    float(primary_series.mean()) if not primary_series.empty else None
+                ),
+                "primary_metric_best": (
+                    float(primary_series.max() if higher_is_better else primary_series.min())
+                    if not primary_series.empty
+                    else None
+                ),
+                "best_val_loss_mean": (
+                    float(best_val_loss_series.mean()) if not best_val_loss_series.empty else None
+                ),
+                "failed_rows_total": float(batch_group["_failed_rows_num"].sum()),
+                "warning_rows_total": float(batch_group["_warning_rows_num"].sum()),
+                "sample_runs": ", ".join(run_names[:3]) if run_names else "N/A",
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def _build_compare_batch_insight_lines(
+    batch_df: pd.DataFrame,
+    *,
+    metric_label: str,
+    higher_is_better: bool,
+) -> list[str]:
+    if batch_df.empty:
+        return []
+
+    insight_lines = [
+        f"已按 started_at 日期把当前选中的运行聚合成 {len(batch_df)} 个批次。",
+    ]
+    if len(batch_df) == 1:
+        insight_lines.append("当前选中的运行只覆盖 1 个批次，这一块主要用于批次级汇总。")
+
+    metric_series = pd.to_numeric(batch_df.get("primary_metric_mean"), errors="coerce")
+    if metric_series.notna().any():
+        best_index = metric_series.idxmax() if higher_is_better else metric_series.idxmin()
+        best_row = batch_df.loc[best_index]
+        insight_lines.append(
+            f"{metric_label} 批次均值最优的是 {best_row.get('batch_label')}，"
+            f"均值 = {_metric_text(best_row.get('primary_metric_mean'))}。"
+        )
+
+    clean_rate_series = pd.to_numeric(batch_df.get("clean_rate"), errors="coerce")
+    if clean_rate_series.notna().any():
+        clean_index = clean_rate_series.idxmax()
+        clean_row = batch_df.loc[clean_index]
+        insight_lines.append(
+            f"clean run 比例最高的批次是 {clean_row.get('batch_label')}，"
+            f"clean rate = {_ratio_text(clean_row.get('clean_rate'))}。"
+        )
+
+    failed_series = pd.to_numeric(batch_df.get("failed_rows_total"), errors="coerce").fillna(0)
+    warning_series = pd.to_numeric(batch_df.get("warning_rows_total"), errors="coerce").fillna(0)
+    noise_series = failed_series + warning_series
+    if not noise_series.empty and noise_series.max() > 0:
+        noisy_index = noise_series.idxmax()
+        noisy_row = batch_df.loc[noisy_index]
+        insight_lines.append(
+            f"失败/告警压力最大的批次是 {noisy_row.get('batch_label')}，"
+            f"Failed Rows 合计 {_metric_text(noisy_row.get('failed_rows_total'))}，"
+            f"Warning Rows 合计 {_metric_text(noisy_row.get('warning_rows_total'))}。"
+        )
+
+    return insight_lines
+
+
+def _format_compare_batch_table_for_display(
+    batch_df: pd.DataFrame,
+    *,
+    metric_label: str,
+) -> pd.DataFrame:
+    if batch_df.empty:
+        return batch_df
+
+    return batch_df.rename(
+        columns={
+            "batch_label": "批次",
+            "batch_start": "批次起点",
+            "batch_end": "批次终点",
+            "run_count": "运行数",
+            "success_runs": "成功运行数",
+            "clean_runs": "clean run 数",
+            "success_rate": "成功率",
+            "clean_rate": "clean run 比例",
+            "primary_metric_mean": f"{metric_label} 均值",
+            "primary_metric_best": f"{metric_label} 最优值",
+            "best_val_loss_mean": "Best Val Loss 均值",
+            "failed_rows_total": "Failed Rows 合计",
+            "warning_rows_total": "Warning Rows 合计",
+            "sample_runs": "示例运行",
+        }
+    )
+
+
 def _create_history_compare_html_export(
     selected_records: list[dict[str, Any]],
     compare_df: pd.DataFrame,
@@ -3575,6 +3738,8 @@ def _create_history_compare_html_export(
     insight_lines: list[str],
     delta_df: pd.DataFrame | None = None,
     trend_df: pd.DataFrame | None = None,
+    batch_df: pd.DataFrame | None = None,
+    batch_insight_lines: list[str] | None = None,
     attribution_df: pd.DataFrame | None = None,
     attribution_payloads: dict[str, dict[str, Any]] | None = None,
 ) -> Path:
@@ -3623,8 +3788,12 @@ def _create_history_compare_html_export(
         )
     highlights_html = "".join(f"<li>{html.escape(line)}</li>" for line in highlight_lines)
     insight_lines_html = "".join(f"<li>{html.escape(line)}</li>" for line in insight_lines)
+    batch_insight_lines_html = "".join(
+        f"<li>{html.escape(line)}</li>" for line in (batch_insight_lines or [])
+    )
     delta_table_html = _df_to_html_table(delta_df, max_rows=max(20, len(delta_df) if isinstance(delta_df, pd.DataFrame) else 20))
     trend_table_html = _df_to_html_table(trend_df, max_rows=max(20, len(trend_df) if isinstance(trend_df, pd.DataFrame) else 20))
+    batch_table_html = _df_to_html_table(batch_df, max_rows=max(20, len(batch_df) if isinstance(batch_df, pd.DataFrame) else 20))
     attribution_table_html = _df_to_html_table(attribution_df, max_rows=max(20, len(attribution_df) if isinstance(attribution_df, pd.DataFrame) else 20))
     attribution_payloads = attribution_payloads if isinstance(attribution_payloads, dict) else {}
     attribution_detail_html_parts: list[str] = []
@@ -3682,6 +3851,16 @@ def _create_history_compare_html_export(
     </section>
 
     <section class="section">
+      <h2>跨批次趋势聚合</h2>
+      {batch_table_html}
+    </section>
+
+    <section class="section">
+      <h2>批次级观察</h2>
+      {"<ul>" + batch_insight_lines_html + "</ul>" if batch_insight_lines_html else "<p class='muted'>当前没有可用的批次级观察。</p>"}
+    </section>
+
+    <section class="section">
       <h2>相对基准的差异表</h2>
       {delta_table_html}
     </section>
@@ -3711,6 +3890,9 @@ def _create_history_compare_html_export(
     _write_text(html_path, html_text)
     csv_path = export_dir / "history_compare_table.csv"
     csv_path.write_text(compare_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(batch_df, pd.DataFrame) and not batch_df.empty:
+        batch_csv_path = export_dir / "history_compare_batch_table.csv"
+        batch_csv_path.write_text(batch_df.to_csv(index=False), encoding="utf-8")
     return html_path
 
 
@@ -3727,6 +3909,8 @@ def _create_history_compare_pdf_export(
     insight_lines: list[str],
     delta_df: pd.DataFrame | None = None,
     trend_df: pd.DataFrame | None = None,
+    batch_df: pd.DataFrame | None = None,
+    batch_insight_lines: list[str] | None = None,
     attribution_df: pd.DataFrame | None = None,
     attribution_payloads: dict[str, dict[str, Any]] | None = None,
 ) -> Path:
@@ -3780,6 +3964,16 @@ def _create_history_compare_pdf_export(
             "lines": _df_to_pdf_lines(trend_df, max_rows=max(20, len(trend_df) if isinstance(trend_df, pd.DataFrame) else 20), max_cols=6),
         },
         {
+            "title": "跨批次趋势聚合",
+            "kind": "table",
+            "lines": _df_to_pdf_lines(batch_df, max_rows=max(20, len(batch_df) if isinstance(batch_df, pd.DataFrame) else 20), max_cols=8),
+        },
+        {
+            "title": "批次级观察",
+            "kind": "bullets",
+            "lines": batch_insight_lines or ["当前没有可用的批次级观察。"],
+        },
+        {
             "title": "相对基准的差异表",
             "kind": "table",
             "lines": _df_to_pdf_lines(delta_df, max_rows=max(20, len(delta_df) if isinstance(delta_df, pd.DataFrame) else 20), max_cols=10),
@@ -3803,6 +3997,9 @@ def _create_history_compare_pdf_export(
 
     csv_path = export_dir / "history_compare_table.csv"
     csv_path.write_text(compare_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(batch_df, pd.DataFrame) and not batch_df.empty:
+        batch_csv_path = export_dir / "history_compare_batch_table.csv"
+        batch_csv_path.write_text(batch_df.to_csv(index=False), encoding="utf-8")
     return _build_pdf_document(
         pdf_path,
         title=f"{APP_NAME} 多运行对比自动化 PDF",
@@ -3879,6 +4076,16 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         metric_label=_get_compare_metric_label(metric_key),
     )
     attribution_df = _build_compare_attribution_table(attribution_payloads)
+    batch_df = _build_compare_batch_trend_table(compare_df, metric_key=metric_key)
+    batch_display_df = _format_compare_batch_table_for_display(
+        batch_df,
+        metric_label=_get_compare_metric_label(metric_key),
+    )
+    batch_insight_lines = _build_compare_batch_insight_lines(
+        batch_df,
+        metric_label=_get_compare_metric_label(metric_key),
+        higher_is_better=higher_is_better,
+    )
 
     failed_rows_numeric = pd.to_numeric(compare_df.get("failed_rows"), errors="coerce").fillna(0)
     warning_rows_numeric = pd.to_numeric(compare_df.get("warning_rows"), errors="coerce").fillna(0)
@@ -3938,6 +4145,49 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         st.subheader("多运行趋势")
         st.line_chart(chart_ready_df.set_index("timeline_label"), height=260)
         st.caption("趋势图按 started_at 从早到晚排序，方便看不同运行之间的连续变化。")
+
+    if not batch_df.empty:
+        st.subheader("跨批次趋势聚合")
+        if batch_insight_lines:
+            for line in batch_insight_lines:
+                st.write(f"- {line}")
+        batch_chart_col1, batch_chart_col2 = st.columns(2)
+        batch_quality_columns = []
+        for column in ["primary_metric_mean", "success_rate", "clean_rate"]:
+            series = pd.to_numeric(batch_df.get(column), errors="coerce")
+            if series.notna().any():
+                batch_quality_columns.append(column)
+        if batch_quality_columns:
+            batch_quality_df = batch_df.loc[:, ["batch_label"] + batch_quality_columns].copy()
+            for column in batch_quality_columns:
+                batch_quality_df[column] = pd.to_numeric(batch_quality_df[column], errors="coerce")
+            batch_chart_col1.line_chart(batch_quality_df.set_index("batch_label"), height=240)
+        else:
+            batch_chart_col1.info("当前没有可展示的批次级质量趋势。")
+
+        batch_count_columns = []
+        for column in ["run_count", "failed_rows_total", "warning_rows_total"]:
+            series = pd.to_numeric(batch_df.get(column), errors="coerce")
+            if series.notna().any():
+                batch_count_columns.append(column)
+        if batch_count_columns:
+            batch_count_df = batch_df.loc[:, ["batch_label"] + batch_count_columns].copy()
+            for column in batch_count_columns:
+                batch_count_df[column] = pd.to_numeric(batch_count_df[column], errors="coerce")
+            batch_chart_col2.bar_chart(batch_count_df.set_index("batch_label"), height=240)
+        else:
+            batch_chart_col2.info("当前没有可展示的批次级计数汇总。")
+
+        st.caption("批次聚合当前按 started_at 的日期维度汇总，便于快速回顾不同实验批次的整体表现。")
+        st.dataframe(batch_display_df, use_container_width=True, hide_index=True)
+        st.download_button(
+            label="下载批次聚合 CSV",
+            data=batch_display_df.to_csv(index=False).encode("utf-8"),
+            file_name="history_compare_batch_table.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_compare_batch_csv",
+        )
 
     st.subheader("Run-to-Run 差异解释")
     if insight_lines:
@@ -4034,6 +4284,8 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
                 insight_lines=insight_lines,
                 delta_df=delta_df,
                 trend_df=trend_df,
+                batch_df=batch_display_df,
+                batch_insight_lines=batch_insight_lines,
                 attribution_df=attribution_df,
                 attribution_payloads=attribution_payloads,
             )
@@ -4053,6 +4305,8 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
                 insight_lines=insight_lines,
                 delta_df=delta_df,
                 trend_df=trend_df,
+                batch_df=batch_display_df,
+                batch_insight_lines=batch_insight_lines,
                 attribution_df=attribution_df,
                 attribution_payloads=attribution_payloads,
             )

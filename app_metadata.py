@@ -4,9 +4,9 @@ from typing import Any
 
 
 APP_NAME = "ML Local App"
-APP_VERSION = "0.1.11"
+APP_VERSION = "0.1.12"
 APP_RELEASE_CHANNEL = "prototype"
-APP_RELEASE_DATE = "2026-04-14"
+APP_RELEASE_DATE = "2026-04-15"
 
 
 def get_app_metadata() -> dict[str, Any]:
