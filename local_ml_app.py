@@ -4718,10 +4718,39 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             batch_chart_col2.info("当前没有可展示的批次级计数汇总。")
 
         st.caption("批次聚合当前按 started_at 的日期维度汇总，便于快速回顾不同实验批次的整体表现。")
-        st.dataframe(batch_display_df, use_container_width=True, hide_index=True)
-        st.download_button(
-            label="下载批次聚合 CSV",
-            data=batch_display_df.to_csv(index=False).encode("utf-8"),
+        batch_view_df, batch_export_df = _render_dataframe_view_controls(
+            batch_display_df,
+            key_prefix="compare_batch_table",
+            preferred_columns=[
+                "批次",
+                "运行数",
+                "成功运行数",
+                "clean run 数",
+                f"{_get_compare_metric_label(metric_key)} 均值",
+                f"{_get_compare_metric_label(metric_key)} 最优值",
+                "Failed Rows 合计",
+                "Warning Rows 合计",
+            ],
+            default_sort_column=f"{_get_compare_metric_label(metric_key)} 均值",
+            default_descending=higher_is_better,
+        )
+        st.caption(
+            f"当前批次聚合共有 {len(batch_export_df)} 条，当前展示前 {len(batch_view_df)} 条；"
+            f"可见列 {len(batch_view_df.columns)} 个。"
+        )
+        st.dataframe(batch_view_df, use_container_width=True, hide_index=True)
+        batch_export_col1, batch_export_col2 = st.columns(2)
+        batch_export_col1.download_button(
+            label="下载批次聚合可见视图 CSV",
+            data=batch_view_df.to_csv(index=False).encode("utf-8"),
+            file_name="history_compare_batch_table_view.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_compare_batch_view_csv",
+        )
+        batch_export_col2.download_button(
+            label="下载批次聚合全表 CSV",
+            data=batch_export_df.to_csv(index=False).encode("utf-8"),
             file_name="history_compare_batch_table.csv",
             mime="text/csv",
             use_container_width=True,
@@ -4767,7 +4796,41 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
 
     if not attribution_df.empty:
         st.subheader("归因总表")
-        st.dataframe(attribution_df, use_container_width=True, hide_index=True)
+        attribution_view_df, attribution_export_df = _render_dataframe_view_controls(
+            attribution_df,
+            key_prefix="compare_attribution_table",
+            preferred_columns=[
+                "run_name",
+                "归因标签",
+                "主指标净改善",
+                "主要正向驱动",
+                "主要负向拖累",
+            ],
+            default_sort_column="主指标净改善",
+            default_descending=True,
+        )
+        st.caption(
+            f"当前归因总表共有 {len(attribution_export_df)} 条，当前展示前 {len(attribution_view_df)} 条；"
+            f"可见列 {len(attribution_view_df.columns)} 个。"
+        )
+        st.dataframe(attribution_view_df, use_container_width=True, hide_index=True)
+        attribution_export_col1, attribution_export_col2 = st.columns(2)
+        attribution_export_col1.download_button(
+            label="下载归因总表可见视图 CSV",
+            data=attribution_view_df.to_csv(index=False).encode("utf-8"),
+            file_name="history_compare_attribution_view.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_compare_attribution_view_csv",
+        )
+        attribution_export_col2.download_button(
+            label="下载归因总表全表 CSV",
+            data=attribution_export_df.to_csv(index=False).encode("utf-8"),
+            file_name="history_compare_attribution_table.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_compare_attribution_csv",
+        )
 
     if not delta_df.empty:
         st.subheader("相对基准的差异表")
@@ -4796,7 +4859,46 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             "warning_rows_delta",
         ]
         available_delta_columns = [column for column in preferred_delta_columns if column in delta_df.columns]
-        st.dataframe(delta_df.loc[:, available_delta_columns], use_container_width=True, hide_index=True)
+        delta_display_df = delta_df.loc[:, available_delta_columns].copy()
+        delta_view_df, delta_export_df = _render_dataframe_view_controls(
+            delta_display_df,
+            key_prefix="compare_delta_table",
+            preferred_columns=[
+                "run_name",
+                "status",
+                "started_at",
+                "primary_metric_value",
+                "primary_metric_delta",
+                "primary_metric_improvement",
+                "best_val_loss_delta",
+                "failed_rows_delta",
+                "warning_rows_delta",
+            ],
+            default_sort_column="primary_metric_improvement",
+            default_descending=True,
+        )
+        st.caption(
+            f"当前差异表共有 {len(delta_export_df)} 条，当前展示前 {len(delta_view_df)} 条；"
+            f"可见列 {len(delta_view_df.columns)} 个。"
+        )
+        st.dataframe(delta_view_df, use_container_width=True, hide_index=True)
+        delta_export_col1, delta_export_col2 = st.columns(2)
+        delta_export_col1.download_button(
+            label="下载差异表可见视图 CSV",
+            data=delta_view_df.to_csv(index=False).encode("utf-8"),
+            file_name="history_compare_delta_view.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_compare_delta_view_csv",
+        )
+        delta_export_col2.download_button(
+            label="下载差异表全表 CSV",
+            data=delta_export_df.to_csv(index=False).encode("utf-8"),
+            file_name="history_compare_delta_table.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_compare_delta_csv",
+        )
 
     export_col1, export_col2, export_col3 = st.columns(3)
     create_compare_html_clicked = export_col1.button(
@@ -4894,13 +4996,46 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             else:
                 st.error(message)
 
-    st.dataframe(compare_df, use_container_width=True, hide_index=True)
-    st.download_button(
-        label="下载当前对比表 CSV",
-        data=compare_df.to_csv(index=False).encode("utf-8"),
+    st.subheader("完整对比表")
+    compare_view_df, compare_export_df = _render_dataframe_view_controls(
+        compare_df,
+        key_prefix="compare_main_table",
+        preferred_columns=[
+            "run_name",
+            "status",
+            "started_at",
+            metric_key,
+            "baseline_rank_spearman",
+            "calibrated_rank_spearman",
+            "best_val_loss",
+            "failed_rows",
+            "warning_rows",
+            "feature_count",
+        ],
+        default_sort_column=metric_key if metric_key in compare_df.columns else "started_at",
+        default_descending=higher_is_better if metric_key in compare_df.columns else False,
+    )
+    st.caption(
+        f"当前对比全表共有 {len(compare_export_df)} 条，当前展示前 {len(compare_view_df)} 条；"
+        f"可见列 {len(compare_view_df.columns)} 个。"
+    )
+    st.dataframe(compare_view_df, use_container_width=True, hide_index=True)
+    compare_export_col1, compare_export_col2 = st.columns(2)
+    compare_export_col1.download_button(
+        label="下载对比表可见视图 CSV",
+        data=compare_view_df.to_csv(index=False).encode("utf-8"),
+        file_name="history_compare_table_view.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key="download_compare_main_view_csv",
+    )
+    compare_export_col2.download_button(
+        label="下载对比表全表 CSV",
+        data=compare_export_df.to_csv(index=False).encode("utf-8"),
         file_name="history_compare_table.csv",
         mime="text/csv",
         use_container_width=True,
+        key="download_compare_main_csv",
     )
 
 
