@@ -153,9 +153,9 @@ class DesktopLauncherApp:
         self.proc: subprocess.Popen[str] | None = None
         self.log_path = repo_root / "local_app_runs" / "desktop_launcher_runtime.log"
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        self.status_var = StringVar(value="正在启动本地界面...")
-        self.url_var = StringVar(value=self.url)
         self.window = Tk()
+        self.status_var = StringVar(master=self.window, value="正在启动本地界面...")
+        self.url_var = StringVar(master=self.window, value=self.url)
         self.window.title(f"{APP_NAME} v{APP_VERSION}")
         self.window.geometry("580x250")
         self.window.resizable(False, False)
