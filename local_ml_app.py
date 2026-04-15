@@ -46,6 +46,16 @@ LOWER_IS_BETTER_COMPARE_METRICS = {
     "warning_rows",
 }
 
+COMPARE_METRIC_LABELS = {
+    "calibrated_rank_spearman": "Calibrated Rank Spearman",
+    "baseline_rank_spearman": "Baseline Rank Spearman",
+    "baseline_rule_auc": "Baseline Rule AUC",
+    "calibrated_rule_auc": "Calibrated Rule AUC",
+    "best_val_loss": "Best Val Loss",
+    "failed_rows": "Failed Rows",
+    "warning_rows": "Warning Rows",
+}
+
 KNOWN_STAGE_SUGGESTIONS = {
     "build_feature_table": "优先检查 input_csv 中的 pdb_path、pocket_file、catalytic_file、ligand_file 是否存在且可访问。",
     "rule_ranker": "先打开 pose_features.csv，确认关键特征列是否存在且不是全空。",
@@ -3185,6 +3195,10 @@ def _is_higher_better_compare_metric(metric_key: str) -> bool:
     return metric_key not in LOWER_IS_BETTER_COMPARE_METRICS
 
 
+def _get_compare_metric_label(metric_key: str) -> str:
+    return COMPARE_METRIC_LABELS.get(metric_key, metric_key)
+
+
 def _sort_compare_df_for_trend(compare_df: pd.DataFrame) -> pd.DataFrame:
     ordered = compare_df.copy()
     ordered["_started_at_dt"] = pd.to_datetime(ordered.get("started_at"), errors="coerce")
@@ -3259,6 +3273,189 @@ def _build_compare_delta_table(
     return pd.DataFrame(rows)
 
 
+def _format_compare_driver_text(metric_key: str, delta_value: float) -> tuple[str, float]:
+    label = _get_compare_metric_label(metric_key)
+    higher_is_better = _is_higher_better_compare_metric(metric_key)
+    quality_impact = float(delta_value) if higher_is_better else -float(delta_value)
+    magnitude = abs(float(delta_value))
+
+    if higher_is_better:
+        if delta_value > 0:
+            text = f"{label} 提升 {_metric_text(magnitude)}"
+        else:
+            text = f"{label} 下降 {_metric_text(magnitude)}"
+    else:
+        if delta_value < 0:
+            text = f"{label} 降低 {_metric_text(magnitude)}"
+        else:
+            text = f"{label} 增加 {_metric_text(magnitude)}"
+    return text, quality_impact
+
+
+def _build_compare_attribution_payloads(
+    delta_df: pd.DataFrame,
+    *,
+    baseline_run_name: str,
+    metric_key: str,
+    metric_label: str,
+) -> dict[str, dict[str, Any]]:
+    if delta_df.empty:
+        return {}
+
+    tracked_driver_keys = [
+        key
+        for key in [
+            "baseline_rank_spearman",
+            "calibrated_rank_spearman",
+            "baseline_rule_auc",
+            "calibrated_rule_auc",
+            "best_val_loss",
+            "failed_rows",
+            "warning_rows",
+        ]
+        if key != metric_key
+    ]
+
+    payloads: dict[str, dict[str, Any]] = {}
+    for row in delta_df.to_dict(orient="records"):
+        run_name = str(row.get("run_name") or "")
+        if not run_name:
+            continue
+
+        primary_improvement = _coerce_float(row.get("primary_metric_improvement"))
+        positive_drivers: list[tuple[str, float]] = []
+        negative_drivers: list[tuple[str, float]] = []
+        context_lines: list[str] = []
+
+        for driver_key in tracked_driver_keys:
+            delta_value = _coerce_float(row.get(f"{driver_key}_delta"))
+            if delta_value is None or abs(delta_value) < 1e-12:
+                continue
+            text, quality_impact = _format_compare_driver_text(driver_key, delta_value)
+            if quality_impact > 0:
+                positive_drivers.append((text, abs(quality_impact)))
+            elif quality_impact < 0:
+                negative_drivers.append((text, abs(quality_impact)))
+
+        positive_drivers.sort(key=lambda item: item[1], reverse=True)
+        negative_drivers.sort(key=lambda item: item[1], reverse=True)
+
+        row_status = str(row.get("status") or "N/A")
+        failed_stage = str(row.get("failed_stage") or "N/A")
+        diagnostic_category = str(row.get("diagnostic_category") or "N/A")
+        if row_status.lower() != "success":
+            context_lines.append(f"当前运行状态为 {row_status}。")
+        if failed_stage not in {"", "N/A", "None"}:
+            context_lines.append(f"失败阶段: {failed_stage}。")
+        if diagnostic_category not in {"", "N/A", "success"}:
+            context_lines.append(f"诊断分类: {diagnostic_category}。")
+
+        if run_name == str(baseline_run_name):
+            summary = f"{run_name} 是当前基准运行，本行只作为比较参考。"
+            detail_lines = [
+                f"基准运行: {run_name}",
+                f"{metric_label} 基准值: {_metric_text(row.get(metric_key))}",
+                "该运行不做相对自身的归因拆解。",
+            ]
+            payloads[run_name] = {
+                "run_name": run_name,
+                "attribution_tag": "基准参考",
+                "primary_metric_improvement": 0.0,
+                "summary": summary,
+                "detail_lines": detail_lines,
+                "positive_driver_texts": [],
+                "negative_driver_texts": [],
+                "top_positive_drivers": "",
+                "top_negative_drivers": "",
+                "net_signal": "baseline",
+            }
+            continue
+
+        if primary_improvement is None:
+            metric_effect_text = f"{metric_label} 当前缺少可比较值。"
+        elif primary_improvement > 0:
+            metric_effect_text = f"{metric_label} 相对基准改善了 {_metric_text(primary_improvement)}。"
+        elif primary_improvement < 0:
+            metric_effect_text = f"{metric_label} 相对基准退化了 {_metric_text(abs(primary_improvement))}。"
+        else:
+            metric_effect_text = f"{metric_label} 与基准基本持平。"
+
+        tag = "接近基准"
+        if primary_improvement is not None:
+            if primary_improvement > 0 and not negative_drivers:
+                tag = "整体向好"
+            elif primary_improvement > 0:
+                tag = "向好但有代价"
+            elif primary_improvement < 0 and positive_drivers:
+                tag = "回退但有亮点"
+            elif primary_improvement < 0:
+                tag = "整体回退"
+
+        positive_texts = [item[0] for item in positive_drivers[:3]]
+        negative_texts = [item[0] for item in negative_drivers[:3]]
+
+        summary_parts = [metric_effect_text]
+        if positive_texts:
+            summary_parts.append("主要正向驱动: " + "；".join(positive_texts) + "。")
+        if negative_texts:
+            summary_parts.append("主要负向拖累: " + "；".join(negative_texts) + "。")
+        if context_lines:
+            summary_parts.extend(context_lines)
+        summary = " ".join(summary_parts)
+
+        detail_lines = [f"运行: {run_name}", f"基准运行: {baseline_run_name}", metric_effect_text]
+        if positive_texts:
+            detail_lines.append("正向驱动: " + "；".join(positive_texts) + "。")
+        if negative_texts:
+            detail_lines.append("负向拖累: " + "；".join(negative_texts) + "。")
+        detail_lines.extend(context_lines)
+
+        payloads[run_name] = {
+            "run_name": run_name,
+            "attribution_tag": tag,
+            "primary_metric_improvement": primary_improvement,
+            "summary": summary,
+            "detail_lines": detail_lines,
+            "positive_driver_texts": positive_texts,
+            "negative_driver_texts": negative_texts,
+            "top_positive_drivers": "；".join(positive_texts),
+            "top_negative_drivers": "；".join(negative_texts),
+            "net_signal": "positive" if primary_improvement and primary_improvement > 0 else ("negative" if primary_improvement and primary_improvement < 0 else "mixed"),
+        }
+
+    return payloads
+
+
+def _build_compare_attribution_table(
+    attribution_payloads: dict[str, dict[str, Any]],
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for run_name, payload in attribution_payloads.items():
+        rows.append(
+            {
+                "run_name": run_name,
+                "attribution_tag": payload.get("attribution_tag"),
+                "primary_metric_improvement": payload.get("primary_metric_improvement"),
+                "positive_drivers": payload.get("top_positive_drivers"),
+                "negative_drivers": payload.get("top_negative_drivers"),
+                "attribution_summary": payload.get("summary"),
+            }
+        )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    return df.rename(
+        columns={
+            "run_name": "run_name",
+            "attribution_tag": "归因标签",
+            "primary_metric_improvement": "主指标净改善",
+            "positive_drivers": "主要正向驱动",
+            "negative_drivers": "主要负向拖累",
+            "attribution_summary": "归因摘要",
+        }
+    )
+
+
 def _build_compare_insight_lines(
     compare_df: pd.DataFrame,
     *,
@@ -3294,6 +3491,12 @@ def _build_compare_insight_lines(
         comparable_delta_df.get("primary_metric_improvement"),
         errors="coerce",
     )
+    attribution_payloads = _build_compare_attribution_payloads(
+        delta_df,
+        baseline_run_name=baseline_run_name,
+        metric_key=metric_key,
+        metric_label=metric_label,
+    )
 
     if not comparable_delta_df.empty and comparable_delta_df["primary_metric_improvement_num"].notna().any():
         best_idx = comparable_delta_df["primary_metric_improvement_num"].idxmax()
@@ -3307,11 +3510,21 @@ def _build_compare_insight_lines(
                 f"相对基准，提升最大的运行是 {best_row.get('run_name')}，"
                 f"{metric_label} 改善了 {_metric_text(best_delta)}。"
             )
+            best_payload = attribution_payloads.get(str(best_row.get("run_name") or ""))
+            if isinstance(best_payload, dict) and best_payload.get("top_positive_drivers"):
+                insight_lines.append(
+                    f"该运行的主要正向驱动: {best_payload['top_positive_drivers']}。"
+                )
         if worst_delta is not None and worst_delta < 0:
             insight_lines.append(
                 f"相对基准，回退最明显的运行是 {worst_row.get('run_name')}，"
                 f"{metric_label} 退化了 {_metric_text(abs(worst_delta))}。"
             )
+            worst_payload = attribution_payloads.get(str(worst_row.get("run_name") or ""))
+            if isinstance(worst_payload, dict) and worst_payload.get("top_negative_drivers"):
+                insight_lines.append(
+                    f"该运行的主要负向拖累: {worst_payload['top_negative_drivers']}。"
+                )
 
     baseline_failed = _coerce_float(baseline_row.get("failed_rows")) or 0.0
     baseline_warning = _coerce_float(baseline_row.get("warning_rows")) or 0.0
@@ -3362,6 +3575,8 @@ def _create_history_compare_html_export(
     insight_lines: list[str],
     delta_df: pd.DataFrame | None = None,
     trend_df: pd.DataFrame | None = None,
+    attribution_df: pd.DataFrame | None = None,
+    attribution_payloads: dict[str, dict[str, Any]] | None = None,
 ) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     export_dir = COMPARE_EXPORT_ROOT / stamp
@@ -3410,6 +3625,21 @@ def _create_history_compare_html_export(
     insight_lines_html = "".join(f"<li>{html.escape(line)}</li>" for line in insight_lines)
     delta_table_html = _df_to_html_table(delta_df, max_rows=max(20, len(delta_df) if isinstance(delta_df, pd.DataFrame) else 20))
     trend_table_html = _df_to_html_table(trend_df, max_rows=max(20, len(trend_df) if isinstance(trend_df, pd.DataFrame) else 20))
+    attribution_table_html = _df_to_html_table(attribution_df, max_rows=max(20, len(attribution_df) if isinstance(attribution_df, pd.DataFrame) else 20))
+    attribution_payloads = attribution_payloads if isinstance(attribution_payloads, dict) else {}
+    attribution_detail_html_parts: list[str] = []
+    for run_name, payload in attribution_payloads.items():
+        detail_lines = payload.get("detail_lines") if isinstance(payload.get("detail_lines"), list) else []
+        if not detail_lines:
+            continue
+        detail_items = "".join(f"<li>{html.escape(str(line))}</li>" for line in detail_lines)
+        attribution_detail_html_parts.append(
+            "<div class='meta-item'>"
+            f"<div class='meta-label'>{html.escape(str(run_name))}</div>"
+            f"<ul>{detail_items}</ul>"
+            "</div>"
+        )
+    attribution_detail_html = "".join(attribution_detail_html_parts)
 
     html_text = f"""<!doctype html>
 <html lang="zh-CN">
@@ -3457,6 +3687,16 @@ def _create_history_compare_html_export(
     </section>
 
     <section class="section">
+      <h2>更细的差异归因总表</h2>
+      {attribution_table_html}
+    </section>
+
+    <section class="section">
+      <h2>运行级归因明细</h2>
+      {"<div class='meta'>" + attribution_detail_html + "</div>" if attribution_detail_html else "<p class='muted'>当前没有可展示的归因明细。</p>"}
+    </section>
+
+    <section class="section">
       <h2>完整对比表</h2>
       {_df_to_html_table(compare_df, max_rows=max(20, len(compare_df)))}
     </section>
@@ -3487,6 +3727,8 @@ def _create_history_compare_pdf_export(
     insight_lines: list[str],
     delta_df: pd.DataFrame | None = None,
     trend_df: pd.DataFrame | None = None,
+    attribution_df: pd.DataFrame | None = None,
+    attribution_payloads: dict[str, dict[str, Any]] | None = None,
 ) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     export_dir = COMPARE_EXPORT_ROOT / stamp
@@ -3507,6 +3749,15 @@ def _create_history_compare_pdf_export(
         & pd.to_numeric(compare_df.get("failed_rows"), errors="coerce").fillna(0).eq(0)
         & pd.to_numeric(compare_df.get("warning_rows"), errors="coerce").fillna(0).eq(0)
     )
+    attribution_payloads = attribution_payloads if isinstance(attribution_payloads, dict) else {}
+    attribution_detail_lines: list[str] = []
+    for run_name, payload in attribution_payloads.items():
+        detail_lines = payload.get("detail_lines") if isinstance(payload.get("detail_lines"), list) else []
+        if not detail_lines:
+            continue
+        attribution_detail_lines.append(f"[{run_name}]")
+        attribution_detail_lines.extend([str(line) for line in detail_lines])
+        attribution_detail_lines.append("")
     sections: list[dict[str, Any] | tuple[str, list[str]]] = [
         {
             "title": "对比摘要",
@@ -3532,6 +3783,16 @@ def _create_history_compare_pdf_export(
             "title": "相对基准的差异表",
             "kind": "table",
             "lines": _df_to_pdf_lines(delta_df, max_rows=max(20, len(delta_df) if isinstance(delta_df, pd.DataFrame) else 20), max_cols=10),
+        },
+        {
+            "title": "更细的差异归因总表",
+            "kind": "table",
+            "lines": _df_to_pdf_lines(attribution_df, max_rows=max(20, len(attribution_df) if isinstance(attribution_df, pd.DataFrame) else 20), max_cols=6),
+        },
+        {
+            "title": "运行级归因明细",
+            "kind": "bullets",
+            "lines": attribution_detail_lines or ["当前没有可展示的归因明细。"],
         },
         {
             "title": "完整对比表",
@@ -3574,17 +3835,16 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         st.info("当前选中的运行没有可对比的摘要信息。")
         return
 
-    metric_labels = {
-        "calibrated_rank_spearman": "Calibrated Rank Spearman",
-        "baseline_rank_spearman": "Baseline Rank Spearman",
-        "best_val_loss": "Best Val Loss",
-        "failed_rows": "Failed Rows",
-        "warning_rows": "Warning Rows",
-    }
     metric_key = st.selectbox(
         "主要对比指标",
-        options=list(metric_labels.keys()),
-        format_func=lambda key: metric_labels.get(key, key),
+        options=[
+            "calibrated_rank_spearman",
+            "baseline_rank_spearman",
+            "best_val_loss",
+            "failed_rows",
+            "warning_rows",
+        ],
+        format_func=lambda key: _get_compare_metric_label(key),
         key="history_compare_metric_key",
     )
     higher_is_better = _is_higher_better_compare_metric(metric_key)
@@ -3610,8 +3870,15 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         compare_df,
         baseline_run_name=baseline_run_name,
         metric_key=metric_key,
-        metric_label=metric_labels.get(metric_key, metric_key),
+        metric_label=_get_compare_metric_label(metric_key),
     )
+    attribution_payloads = _build_compare_attribution_payloads(
+        delta_df,
+        baseline_run_name=baseline_run_name,
+        metric_key=metric_key,
+        metric_label=_get_compare_metric_label(metric_key),
+    )
+    attribution_df = _build_compare_attribution_table(attribution_payloads)
 
     failed_rows_numeric = pd.to_numeric(compare_df.get("failed_rows"), errors="coerce").fillna(0)
     warning_rows_numeric = pd.to_numeric(compare_df.get("warning_rows"), errors="coerce").fillna(0)
@@ -3625,7 +3892,7 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
     c3.metric("Clean Runs", clean_count)
     c4.metric("Leader Value", _fmt_metric(leader_value))
     st.caption(
-        f"当前按 {metric_labels.get(metric_key, metric_key)} "
+        f"当前按 {_get_compare_metric_label(metric_key)} "
         f"{'越高越好' if higher_is_better else '越低越好'} 比较；领先运行: {leader_name or 'N/A'}；"
         f"当前基准运行: {baseline_run_name}"
     )
@@ -3679,6 +3946,40 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
     else:
         st.info("当前选中的运行还不足以生成稳定的差异解释。")
 
+    if attribution_payloads:
+        st.subheader("更细的差异归因")
+        attribution_run_candidates = [
+            run_name
+            for run_name in attribution_payloads.keys()
+            if str(run_name) != str(baseline_run_name)
+        ] or list(attribution_payloads.keys())
+        selected_attribution_run = st.selectbox(
+            "查看归因明细的运行",
+            options=attribution_run_candidates,
+            key="history_compare_attribution_run",
+        )
+        selected_attribution = attribution_payloads.get(str(selected_attribution_run))
+        if isinstance(selected_attribution, dict):
+            st.caption(str(selected_attribution.get("summary") or ""))
+            detail_col1, detail_col2 = st.columns(2)
+            positive_driver_texts = selected_attribution.get("positive_driver_texts") if isinstance(selected_attribution.get("positive_driver_texts"), list) else []
+            negative_driver_texts = selected_attribution.get("negative_driver_texts") if isinstance(selected_attribution.get("negative_driver_texts"), list) else []
+            if positive_driver_texts:
+                detail_col1.success("正向驱动: " + "；".join([str(item) for item in positive_driver_texts]))
+            else:
+                detail_col1.info("当前没有明显的正向驱动。")
+            if negative_driver_texts:
+                detail_col2.warning("负向拖累: " + "；".join([str(item) for item in negative_driver_texts]))
+            else:
+                detail_col2.success("当前没有明显的负向拖累。")
+            detail_lines = selected_attribution.get("detail_lines") if isinstance(selected_attribution.get("detail_lines"), list) else []
+            for line in detail_lines:
+                st.write(f"- {line}")
+
+    if not attribution_df.empty:
+        st.subheader("归因总表")
+        st.dataframe(attribution_df, use_container_width=True, hide_index=True)
+
     if not delta_df.empty:
         st.subheader("相对基准的差异表")
         preferred_delta_columns = [
@@ -3725,7 +4026,7 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
                 selected_records,
                 compare_df,
                 metric_key=metric_key,
-                metric_label=metric_labels.get(metric_key, metric_key),
+                metric_label=_get_compare_metric_label(metric_key),
                 higher_is_better=higher_is_better,
                 leader_name=leader_name,
                 leader_value=leader_value,
@@ -3733,6 +4034,8 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
                 insight_lines=insight_lines,
                 delta_df=delta_df,
                 trend_df=trend_df,
+                attribution_df=attribution_df,
+                attribution_payloads=attribution_payloads,
             )
         st.session_state["last_compare_export_html"] = str(html_path)
         st.session_state["last_compare_export_html_message"] = f"已生成多运行对比 HTML: {html_path}"
@@ -3742,7 +4045,7 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
                 selected_records,
                 compare_df,
                 metric_key=metric_key,
-                metric_label=metric_labels.get(metric_key, metric_key),
+                metric_label=_get_compare_metric_label(metric_key),
                 higher_is_better=higher_is_better,
                 leader_name=leader_name,
                 leader_value=leader_value,
@@ -3750,6 +4053,8 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
                 insight_lines=insight_lines,
                 delta_df=delta_df,
                 trend_df=trend_df,
+                attribution_df=attribution_df,
+                attribution_payloads=attribution_payloads,
             )
         st.session_state["last_compare_export_pdf"] = str(pdf_path)
         st.session_state["last_compare_export_pdf_message"] = f"已生成多运行对比 PDF: {pdf_path}"
