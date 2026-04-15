@@ -537,6 +537,8 @@ Windows 下也可以直接双击：
 start_local_app.bat
 ```
 
+当前这个脚本会优先使用仓库内 `.venv`，并直接调用桌面启动器，不再要求手工输入 `streamlit` 命令。
+
 特点:
 - 不改现有 `build_feature_table.py` / `rule_ranker.py` / `train_pose_model.py` / `rank_nanobodies.py` 主链路
 - 页面里可选择从 `input_csv` 或 `pose_features.csv` 启动

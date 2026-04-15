@@ -4,7 +4,7 @@ from typing import Any
 
 
 APP_NAME = "ML Local App"
-APP_VERSION = "0.1.21"
+APP_VERSION = "0.1.22"
 APP_RELEASE_CHANNEL = "prototype"
 APP_RELEASE_DATE = "2026-04-15"
 

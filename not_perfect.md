@@ -46,6 +46,15 @@
   - 下载关键 JSON / CSV / Markdown 产物
 - 新增 `.gitignore`，避免把 `.venv`、本地运行产物和测试输出目录直接提交到 GitHub。
 
+## 已完成的一键启动入口增强版（2026-04-15）
+
+- 在 [start_local_app.bat](start_local_app.bat) 中把源码启动入口收敛成了一键脚本。
+- 当前已经支持：
+  - 自动优先使用仓库内 `.venv`
+  - 自动调用 [ml_desktop_launcher.py](ml_desktop_launcher.py)
+  - 缺少 `pythonw` 时自动回退到 `python`
+- 这一步主要解决“源码目录虽然能跑，但启动方式仍然像开发脚本”的问题。
+
 ## 已完成的本地交互壳增强版（2026-04-14）
 
 - 在 [local_ml_app.py](local_ml_app.py) 中补齐了“更像本地软件”的三块基础体验：
