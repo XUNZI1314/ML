@@ -4718,6 +4718,11 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             batch_chart_col2.info("当前没有可展示的批次级计数汇总。")
 
         st.caption("批次聚合当前按 started_at 的日期维度汇总，便于快速回顾不同实验批次的整体表现。")
+        batch_display_df, batch_threshold_summaries = _render_numeric_threshold_filters(
+            batch_display_df,
+            key_prefix="compare_batch_threshold",
+            title="批次聚合数值阈值筛选",
+        )
         batch_view_df, batch_export_df = _render_dataframe_view_controls(
             batch_display_df,
             key_prefix="compare_batch_table",
@@ -4734,6 +4739,8 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             default_sort_column=f"{_get_compare_metric_label(metric_key)} 均值",
             default_descending=higher_is_better,
         )
+        if batch_threshold_summaries:
+            st.caption("已启用阈值: " + "；".join(batch_threshold_summaries))
         st.caption(
             f"当前批次聚合共有 {len(batch_export_df)} 条，当前展示前 {len(batch_view_df)} 条；"
             f"可见列 {len(batch_view_df.columns)} 个。"
@@ -4796,6 +4803,11 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
 
     if not attribution_df.empty:
         st.subheader("归因总表")
+        attribution_df, attribution_threshold_summaries = _render_numeric_threshold_filters(
+            attribution_df,
+            key_prefix="compare_attribution_threshold",
+            title="归因总表数值阈值筛选",
+        )
         attribution_view_df, attribution_export_df = _render_dataframe_view_controls(
             attribution_df,
             key_prefix="compare_attribution_table",
@@ -4809,6 +4821,8 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             default_sort_column="主指标净改善",
             default_descending=True,
         )
+        if attribution_threshold_summaries:
+            st.caption("已启用阈值: " + "；".join(attribution_threshold_summaries))
         st.caption(
             f"当前归因总表共有 {len(attribution_export_df)} 条，当前展示前 {len(attribution_view_df)} 条；"
             f"可见列 {len(attribution_view_df.columns)} 个。"
@@ -4860,6 +4874,11 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         ]
         available_delta_columns = [column for column in preferred_delta_columns if column in delta_df.columns]
         delta_display_df = delta_df.loc[:, available_delta_columns].copy()
+        delta_display_df, delta_threshold_summaries = _render_numeric_threshold_filters(
+            delta_display_df,
+            key_prefix="compare_delta_threshold",
+            title="差异表数值阈值筛选",
+        )
         delta_view_df, delta_export_df = _render_dataframe_view_controls(
             delta_display_df,
             key_prefix="compare_delta_table",
@@ -4877,6 +4896,8 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             default_sort_column="primary_metric_improvement",
             default_descending=True,
         )
+        if delta_threshold_summaries:
+            st.caption("已启用阈值: " + "；".join(delta_threshold_summaries))
         st.caption(
             f"当前差异表共有 {len(delta_export_df)} 条，当前展示前 {len(delta_view_df)} 条；"
             f"可见列 {len(delta_view_df.columns)} 个。"
@@ -4997,6 +5018,11 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
                 st.error(message)
 
     st.subheader("完整对比表")
+    compare_df, compare_threshold_summaries = _render_numeric_threshold_filters(
+        compare_df,
+        key_prefix="compare_main_threshold",
+        title="完整对比表数值阈值筛选",
+    )
     compare_view_df, compare_export_df = _render_dataframe_view_controls(
         compare_df,
         key_prefix="compare_main_table",
@@ -5015,6 +5041,8 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         default_sort_column=metric_key if metric_key in compare_df.columns else "started_at",
         default_descending=higher_is_better if metric_key in compare_df.columns else False,
     )
+    if compare_threshold_summaries:
+        st.caption("已启用阈值: " + "；".join(compare_threshold_summaries))
     st.caption(
         f"当前对比全表共有 {len(compare_export_df)} 条，当前展示前 {len(compare_view_df)} 条；"
         f"可见列 {len(compare_view_df.columns)} 个。"
