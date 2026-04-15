@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import traceback
@@ -3221,6 +3222,19 @@ def _build_history_table(records: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _compute_directory_size(path: Path) -> int:
+    total_size = 0
+    if not path.exists():
+        return total_size
+    for child in path.rglob("*"):
+        if child.is_file():
+            try:
+                total_size += int(child.stat().st_size)
+            except OSError:
+                continue
+    return total_size
+
+
 def _filter_history_records(
     records: list[dict[str, Any]],
     *,
@@ -3318,6 +3332,106 @@ def _render_history_filter_controls(
     )
     st.caption(f"当前筛选后共有 {len(filtered_records)} 条历史记录。")
     return filtered_records
+
+
+def _build_cleanup_targets(history_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    targets: list[dict[str, Any]] = []
+
+    for item in history_records:
+        run_root = Path(str(item.get("run_root") or "")).resolve()
+        if not run_root.exists():
+            continue
+        targets.append(
+            {
+                "label": f"运行记录 | {str(item.get('run_name') or 'N/A')} | {str(item.get('status') or 'N/A')}",
+                "target_type": "run_root",
+                "name": str(item.get("run_name") or run_root.name),
+                "created_at": str(item.get("started_at") or ""),
+                "path": str(run_root),
+                "size_bytes": _compute_directory_size(run_root),
+            }
+        )
+
+    if COMPARE_EXPORT_ROOT.exists():
+        compare_export_dirs = sorted(
+            [path for path in COMPARE_EXPORT_ROOT.iterdir() if path.is_dir()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for path in compare_export_dirs:
+            targets.append(
+                {
+                    "label": f"对比导出 | {path.name}",
+                    "target_type": "compare_export",
+                    "name": path.name,
+                    "created_at": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "path": str(path.resolve()),
+                    "size_bytes": _compute_directory_size(path),
+                }
+            )
+
+    if BUNDLE_IMPORT_ROOT.exists():
+        bundle_import_dirs = sorted(
+            [path for path in BUNDLE_IMPORT_ROOT.iterdir() if path.is_dir()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for path in bundle_import_dirs:
+            targets.append(
+                {
+                    "label": f"导入缓存 | {path.name}",
+                    "target_type": "bundle_import",
+                    "name": path.name,
+                    "created_at": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "path": str(path.resolve()),
+                    "size_bytes": _compute_directory_size(path),
+                }
+            )
+
+    return targets
+
+
+def _build_cleanup_target_table(targets: list[dict[str, Any]]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for item in targets:
+        rows.append(
+            {
+                "类别": str(item.get("target_type") or ""),
+                "名称": str(item.get("name") or ""),
+                "创建时间": str(item.get("created_at") or ""),
+                "大小": _format_byte_count(int(item.get("size_bytes") or 0)),
+                "路径": str(item.get("path") or ""),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _is_path_within_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _delete_cleanup_target(target: dict[str, Any]) -> str:
+    target_path = Path(str(target.get("path") or "")).expanduser().resolve()
+    if not target_path.exists() or not target_path.is_dir():
+        raise FileNotFoundError(f"待清理目录不存在: {target_path}")
+
+    protected_roots = {
+        LOCAL_APP_RUN_ROOT.resolve(),
+        PARAM_TEMPLATE_ROOT.resolve(),
+        COMPARE_EXPORT_ROOT.resolve(),
+        BUNDLE_IMPORT_ROOT.resolve(),
+    }
+    if target_path in protected_roots:
+        raise ValueError("不能直接删除应用的根级目录。")
+    if not _is_path_within_root(target_path, LOCAL_APP_RUN_ROOT):
+        raise ValueError("只允许清理由应用生成的 local_app_runs 子目录。")
+
+    shutil.rmtree(target_path)
+    return f"已删除目录: {target_path}"
 
 
 def _load_training_summary_payload(
@@ -5587,6 +5701,90 @@ def main() -> None:
                     key="download_filtered_history_csv",
                 )
             st.caption("可在左侧“运行历史”区域加载某次历史结果，并恢复对应表单参数；需要多次运行对比时，直接切到“运行对比”页。")
+
+            with st.expander("运行产物清理工具"):
+                cleanup_targets = _build_cleanup_targets(history_records)
+                if not cleanup_targets:
+                    st.info("当前没有可清理的应用产物目录。")
+                else:
+                    cleanup_df = _build_cleanup_target_table(cleanup_targets)
+                    cleanup_metric_col1, cleanup_metric_col2 = st.columns(2)
+                    cleanup_metric_col1.metric("可清理目录数", len(cleanup_targets))
+                    cleanup_metric_col2.metric(
+                        "可回收空间",
+                        _format_byte_count(int(sum(int(item.get("size_bytes") or 0) for item in cleanup_targets))),
+                    )
+                    st.dataframe(cleanup_df, use_container_width=True, hide_index=True)
+
+                    cleanup_labels = [str(item.get("label") or "") for item in cleanup_targets]
+                    selected_cleanup_label = st.selectbox(
+                        "选择要清理的目录",
+                        options=cleanup_labels,
+                        key="selected_cleanup_target_label",
+                    )
+                    selected_cleanup_target = next(
+                        (item for item in cleanup_targets if str(item.get("label") or "") == selected_cleanup_label),
+                        None,
+                    )
+                    confirm_text = str(
+                        st.text_input(
+                            "输入 DELETE 确认删除",
+                            key="cleanup_confirm_text",
+                            placeholder="DELETE",
+                        )
+                        or ""
+                    ).strip()
+                    active_run_info = st.session_state.get("active_run_info")
+                    active_run_root = (
+                        Path(str(active_run_info.get("run_root"))).resolve()
+                        if isinstance(active_run_info, dict) and active_run_info.get("run_root")
+                        else None
+                    )
+                    selected_cleanup_path = (
+                        Path(str(selected_cleanup_target.get("path") or "")).resolve()
+                        if isinstance(selected_cleanup_target, dict) and selected_cleanup_target.get("path")
+                        else None
+                    )
+                    cleanup_target_is_active = bool(
+                        active_run_root is not None
+                        and selected_cleanup_path is not None
+                        and selected_cleanup_path == active_run_root
+                    )
+                    if cleanup_target_is_active:
+                        st.warning("当前选中的目录对应正在运行的任务，不能删除。")
+
+                    cleanup_action_col1, cleanup_action_col2 = st.columns(2)
+                    open_cleanup_target_clicked = cleanup_action_col1.button(
+                        "打开所选目录",
+                        use_container_width=True,
+                        disabled=selected_cleanup_path is None or not selected_cleanup_path.exists(),
+                        key="open_cleanup_target_clicked",
+                    )
+                    delete_cleanup_target_clicked = cleanup_action_col2.button(
+                        "删除所选目录",
+                        use_container_width=True,
+                        disabled=(
+                            selected_cleanup_target is None
+                            or confirm_text != "DELETE"
+                            or cleanup_target_is_active
+                        ),
+                        key="delete_cleanup_target_clicked",
+                    )
+
+                    if open_cleanup_target_clicked and selected_cleanup_path is not None:
+                        ok, message = _open_local_path(selected_cleanup_path)
+                        if ok:
+                            st.success(message)
+                        else:
+                            st.error(message)
+
+                    if delete_cleanup_target_clicked and isinstance(selected_cleanup_target, dict):
+                        try:
+                            message = _delete_cleanup_target(selected_cleanup_target)
+                            st.success(message)
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(str(exc))
 
     with tab_ranking:
         if not isinstance(summary, dict):
