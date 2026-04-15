@@ -441,6 +441,33 @@ def _load_parameter_template(template_name: str) -> dict[str, Any] | None:
     return _load_json(path)
 
 
+def _build_history_requeue_form_payload(run_root: Path) -> dict[str, Any] | None:
+    metadata = _read_run_metadata(run_root)
+    form_payload = metadata.get("form_payload") if isinstance(metadata.get("form_payload"), dict) else None
+    if not isinstance(form_payload, dict):
+        return None
+
+    payload = dict(form_payload)
+    resolved_inputs = metadata.get("resolved_inputs") if isinstance(metadata.get("resolved_inputs"), dict) else {}
+    field_mapping = {
+        "input_csv": "input_csv_local_path",
+        "feature_csv": "feature_csv_local_path",
+        "default_pocket_file": "default_pocket_local_path",
+        "default_catalytic_file": "default_catalytic_local_path",
+        "default_ligand_file": "default_ligand_local_path",
+    }
+    for resolved_key, field_key in field_mapping.items():
+        current_value = str(payload.get(field_key) or "").strip()
+        if current_value:
+            continue
+        resolved_value = str(resolved_inputs.get(resolved_key) or "").strip()
+        if resolved_value:
+            payload[field_key] = resolved_value
+
+    payload["run_name"] = f"{run_root.name}_rerun"
+    return payload
+
+
 def _allocate_run_identity(preferred_name: str) -> tuple[str, Path]:
     safe_name = _slugify_name(preferred_name)
     candidate_root = LOCAL_APP_RUN_ROOT / safe_name
@@ -581,6 +608,29 @@ def _prepare_run_request_from_form(
         "form_payload": form_payload,
         "pipeline_kwargs": pipeline_kwargs,
     }
+
+
+def _enqueue_history_run_request(run_root: Path) -> str:
+    payload = _build_history_requeue_form_payload(run_root)
+    if not isinstance(payload, dict):
+        raise ValueError("所选历史记录缺少可复用的表单配置，无法重新入队。")
+
+    _apply_form_payload(payload)
+    run_request = _prepare_run_request_from_form(
+        input_csv_upload=None,
+        feature_csv_upload=None,
+        default_pocket_upload=None,
+        default_catalytic_upload=None,
+        default_ligand_upload=None,
+    )
+    queue = st.session_state.get("run_queue")
+    if not isinstance(queue, list):
+        queue = []
+    queue.append(run_request)
+    st.session_state["run_queue"] = queue
+    message = f"已按历史配置重新入队: {run_request['run_name']}"
+    st.session_state["last_scheduler_message"] = message
+    return message
 
 
 def _read_run_metadata(run_root: Path) -> dict[str, Any]:
@@ -803,6 +853,44 @@ def _build_run_queue_table(queue: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _build_run_queue_option_label(item: dict[str, Any], index: int) -> str:
+    start_mode = str((item.get("form_payload") or {}).get("start_mode") or "N/A")
+    return f"{index + 1}. {str(item.get('run_name') or 'N/A')} | {start_mode}"
+
+
+def _move_run_queue_item(
+    queue: list[dict[str, Any]],
+    *,
+    selected_index: int,
+    delta: int,
+) -> tuple[list[dict[str, Any]], int]:
+    if not queue:
+        return queue, 0
+    current_index = max(0, min(int(selected_index), len(queue) - 1))
+    next_index = max(0, min(current_index + int(delta), len(queue) - 1))
+    if next_index == current_index:
+        return list(queue), current_index
+
+    updated_queue = list(queue)
+    item = updated_queue.pop(current_index)
+    updated_queue.insert(next_index, item)
+    return updated_queue, next_index
+
+
+def _remove_run_queue_item(
+    queue: list[dict[str, Any]],
+    *,
+    selected_index: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, int]:
+    if not queue:
+        return queue, None, 0
+    current_index = max(0, min(int(selected_index), len(queue) - 1))
+    updated_queue = list(queue)
+    removed_item = updated_queue.pop(current_index)
+    next_index = max(0, min(current_index, len(updated_queue) - 1)) if updated_queue else 0
+    return updated_queue, removed_item, next_index
+
+
 def _render_scheduler_panel() -> None:
     st.subheader("运行调度")
     scheduler_message = str(st.session_state.get("last_scheduler_message") or "")
@@ -837,6 +925,69 @@ def _render_scheduler_panel() -> None:
     if isinstance(queue, list) and queue:
         st.caption(f"当前队列长度: {len(queue)}")
         st.dataframe(_build_run_queue_table(queue), use_container_width=True, hide_index=True)
+        queue_index_options = list(range(len(queue)))
+        selected_queue_index = st.selectbox(
+            "选择要调整的队列项",
+            options=queue_index_options,
+            format_func=lambda idx: _build_run_queue_option_label(queue[int(idx)], int(idx)),
+            key="scheduler_selected_queue_index",
+        )
+        queue_action_col1, queue_action_col2, queue_action_col3 = st.columns(3)
+        move_up_clicked = queue_action_col1.button(
+            "上移选中项",
+            use_container_width=True,
+            disabled=int(selected_queue_index) <= 0,
+            key="scheduler_move_queue_up",
+        )
+        move_down_clicked = queue_action_col2.button(
+            "下移选中项",
+            use_container_width=True,
+            disabled=int(selected_queue_index) >= len(queue) - 1,
+            key="scheduler_move_queue_down",
+        )
+        remove_clicked = queue_action_col3.button(
+            "移除选中项",
+            use_container_width=True,
+            key="scheduler_remove_queue_item",
+        )
+
+        if move_up_clicked:
+            updated_queue, next_index = _move_run_queue_item(
+                queue,
+                selected_index=int(selected_queue_index),
+                delta=-1,
+            )
+            st.session_state["run_queue"] = updated_queue
+            st.session_state["scheduler_selected_queue_index"] = next_index
+            st.session_state["last_scheduler_message"] = (
+                f"已上移队列项: {str(queue[int(selected_queue_index)].get('run_name') or 'N/A')}"
+            )
+            st.rerun()
+
+        if move_down_clicked:
+            updated_queue, next_index = _move_run_queue_item(
+                queue,
+                selected_index=int(selected_queue_index),
+                delta=1,
+            )
+            st.session_state["run_queue"] = updated_queue
+            st.session_state["scheduler_selected_queue_index"] = next_index
+            st.session_state["last_scheduler_message"] = (
+                f"已下移队列项: {str(queue[int(selected_queue_index)].get('run_name') or 'N/A')}"
+            )
+            st.rerun()
+
+        if remove_clicked:
+            updated_queue, removed_item, next_index = _remove_run_queue_item(
+                queue,
+                selected_index=int(selected_queue_index),
+            )
+            st.session_state["run_queue"] = updated_queue
+            st.session_state["scheduler_selected_queue_index"] = next_index
+            st.session_state["last_scheduler_message"] = (
+                f"已移除队列项: {str((removed_item or {}).get('run_name') or 'N/A')}"
+            )
+            st.rerun()
     else:
         st.caption("当前队列为空。")
 
@@ -3070,6 +3221,105 @@ def _build_history_table(records: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _filter_history_records(
+    records: list[dict[str, Any]],
+    *,
+    keyword: str = "",
+    statuses: list[str] | None = None,
+    start_modes: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    keyword_text = str(keyword or "").strip().lower()
+    selected_statuses = {
+        str(item).strip()
+        for item in (statuses or [])
+        if str(item).strip()
+    }
+    selected_start_modes = {
+        str(item).strip()
+        for item in (start_modes or [])
+        if str(item).strip()
+    }
+
+    filtered_records: list[dict[str, Any]] = []
+    for item in records:
+        item_status = str(item.get("status") or "").strip()
+        item_start_mode = str(item.get("start_mode") or "").strip()
+        if selected_statuses and item_status not in selected_statuses:
+            continue
+        if selected_start_modes and item_start_mode not in selected_start_modes:
+            continue
+
+        if keyword_text:
+            haystack = " | ".join(
+                [
+                    str(item.get("run_name") or ""),
+                    item_status,
+                    str(item.get("started_at") or ""),
+                    item_start_mode,
+                    str(item.get("failed_stage") or ""),
+                    str(item.get("label_valid_count") or ""),
+                ]
+            ).lower()
+            if keyword_text not in haystack:
+                continue
+
+        filtered_records.append(item)
+    return filtered_records
+
+
+def _render_history_filter_controls(
+    records: list[dict[str, Any]],
+    *,
+    key_prefix: str,
+    title: str = "历史筛选",
+) -> list[dict[str, Any]]:
+    status_options = sorted(
+        {
+            str(item.get("status") or "").strip()
+            for item in records
+            if str(item.get("status") or "").strip()
+        }
+    )
+    start_mode_options = sorted(
+        {
+            str(item.get("start_mode") or "").strip()
+            for item in records
+            if str(item.get("start_mode") or "").strip()
+        }
+    )
+
+    st.caption(title)
+    filter_col1, filter_col2, filter_col3 = st.columns([2, 1, 1])
+    keyword = str(
+        filter_col1.text_input(
+            "关键词",
+            key=f"{key_prefix}_history_keyword",
+            placeholder="run_name / status / failed_stage",
+        )
+        or ""
+    ).strip()
+    selected_statuses = filter_col2.multiselect(
+        "状态",
+        options=status_options,
+        default=status_options,
+        key=f"{key_prefix}_history_statuses",
+    )
+    selected_start_modes = filter_col3.multiselect(
+        "启动方式",
+        options=start_mode_options,
+        default=start_mode_options,
+        key=f"{key_prefix}_history_start_modes",
+    )
+    filtered_records = _filter_history_records(
+        records,
+        keyword=keyword,
+        statuses=[str(item) for item in selected_statuses],
+        start_modes=[str(item) for item in selected_start_modes],
+    )
+    st.caption(f"当前筛选后共有 {len(filtered_records)} 条历史记录。")
+    return filtered_records
+
+
 def _load_training_summary_payload(
     summary: dict[str, Any] | None,
     metadata: dict[str, Any] | None = None,
@@ -4013,8 +4263,17 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         st.info("当前还没有历史运行记录，暂时无法做多运行对比。")
         return
 
-    record_map = {str(item["label"]): item for item in history_records}
-    compare_options = [str(item["label"]) for item in history_records]
+    filtered_history_records = _render_history_filter_controls(
+        history_records,
+        key_prefix="compare",
+        title="先筛选要进入多运行对比候选集的历史记录",
+    )
+    if not filtered_history_records:
+        st.info("当前筛选条件下没有可对比的历史运行。")
+        return
+
+    record_map = {str(item["label"]): item for item in filtered_history_records}
+    compare_options = [str(item["label"]) for item in filtered_history_records]
     default_compare = compare_options[: min(3, len(compare_options))]
     selected_labels = st.multiselect(
         "选择要对比的运行",
@@ -4782,14 +5041,29 @@ def main() -> None:
         load_template_clicked = template_col2.button("载入模板", use_container_width=True)
 
         st.subheader("运行历史")
-        history_labels = [""] + [str(item["label"]) for item in history_records]
+        history_sidebar_filter_text = str(
+            st.text_input(
+                "筛选历史记录",
+                key="history_sidebar_filter_text",
+                placeholder="run_name / status / start_mode",
+            )
+            or ""
+        ).strip()
+        sidebar_history_records = _filter_history_records(
+            history_records,
+            keyword=history_sidebar_filter_text,
+        )
+        history_labels = [""] + [str(item["label"]) for item in sidebar_history_records]
         st.selectbox(
             "最近运行记录",
             options=history_labels,
             format_func=lambda x: "请选择历史记录" if not x else x,
             key="selected_history_label",
         )
-        load_history_clicked = st.button("载入所选历史结果", use_container_width=True)
+        st.caption(f"当前匹配 {len(sidebar_history_records)} 条历史记录。")
+        history_action_col1, history_action_col2 = st.columns(2)
+        load_history_clicked = history_action_col1.button("载入历史结果", use_container_width=True)
+        requeue_history_clicked = history_action_col2.button("复制并入队", use_container_width=True)
 
         st.subheader("数据包导入")
         bundle_zip_upload = st.file_uploader("上传 zip 数据包", type=["zip"], key="bundle_zip_upload")
@@ -4965,6 +5239,19 @@ def main() -> None:
             _load_history_run(run_root)
             st.success(f"已载入历史结果: {run_root.name}")
             st.rerun()
+
+    if requeue_history_clicked:
+        selected_history_label = str(st.session_state.get("selected_history_label") or "").strip()
+        run_root = history_label_to_path.get(selected_history_label)
+        if run_root is None:
+            st.warning("请先选择一条历史记录。")
+        else:
+            try:
+                message = _enqueue_history_run_request(run_root)
+                st.success(message)
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
 
     if check_inputs_clicked:
         try:
@@ -5269,7 +5556,36 @@ def main() -> None:
             st.info("当前还没有历史运行记录。")
         else:
             st.subheader("最近运行记录")
-            st.dataframe(_build_history_table(history_records), use_container_width=True, hide_index=True)
+            filtered_history_records = _render_history_filter_controls(
+                history_records,
+                key_prefix="history_tab",
+                title="按关键词 / 状态 / 启动方式筛选历史记录",
+            )
+            if not filtered_history_records:
+                st.info("当前筛选条件下没有历史记录。")
+            else:
+                filtered_history_df = _build_history_table(filtered_history_records)
+                history_metric_col1, history_metric_col2, history_metric_col3 = st.columns(3)
+                history_metric_col1.metric("Visible Runs", len(filtered_history_df))
+                history_metric_col2.metric(
+                    "Success Runs",
+                    int(filtered_history_df["status"].astype(str).str.lower().eq("success").sum()),
+                )
+                history_metric_col3.metric(
+                    "Failed / Cancelled",
+                    int(
+                        filtered_history_df["status"].astype(str).str.lower().isin(["failed", "cancelled"]).sum()
+                    ),
+                )
+                st.dataframe(filtered_history_df, use_container_width=True, hide_index=True)
+                st.download_button(
+                    label="下载当前筛选后的历史记录 CSV",
+                    data=filtered_history_df.to_csv(index=False).encode("utf-8"),
+                    file_name="history_runs_filtered.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_filtered_history_csv",
+                )
             st.caption("可在左侧“运行历史”区域加载某次历史结果，并恢复对应表单参数；需要多次运行对比时，直接切到“运行对比”页。")
 
     with tab_ranking:
@@ -5304,6 +5620,14 @@ def main() -> None:
                         ]
                     st.caption(f"共 {len(ml_df)} 条，当前展示前 {min(int(ranking_preview_rows), len(ml_df))} 条。")
                     st.dataframe(ml_df.head(int(ranking_preview_rows)), use_container_width=True)
+                    st.download_button(
+                        label="下载当前 ML 筛选结果 CSV",
+                        data=ml_df.to_csv(index=False).encode("utf-8"),
+                        file_name="ml_ranking_filtered.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_ml_ranking_csv",
+                    )
 
             if rule_ranking_csv is not None and rule_ranking_csv.exists():
                 st.subheader("Rule 排名")
@@ -5320,6 +5644,14 @@ def main() -> None:
                         ]
                     st.caption(f"共 {len(rule_df)} 条，当前展示前 {min(int(ranking_preview_rows), len(rule_df))} 条。")
                     st.dataframe(rule_df.head(int(ranking_preview_rows)), use_container_width=True)
+                    st.download_button(
+                        label="下载当前 Rule 筛选结果 CSV",
+                        data=rule_df.to_csv(index=False).encode("utf-8"),
+                        file_name="rule_ranking_filtered.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_rule_ranking_csv",
+                    )
 
     with tab_pose:
         if not isinstance(summary, dict):
@@ -5358,6 +5690,14 @@ def main() -> None:
                         pose_df = pose_df[mask]
                     st.caption(f"共 {len(pose_df)} 条，当前展示前 {min(int(pose_preview_rows), len(pose_df))} 条。")
                     st.dataframe(pose_df.head(int(pose_preview_rows)), use_container_width=True)
+                    st.download_button(
+                        label="下载当前 Pose 筛选结果 CSV",
+                        data=pose_df.to_csv(index=False).encode("utf-8"),
+                        file_name="pose_predictions_filtered.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_pose_csv",
+                    )
             else:
                 st.info("当前没有 pose_predictions.csv。")
 
