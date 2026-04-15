@@ -1081,6 +1081,83 @@ def _apply_dataframe_view(
     return working_df.loc[:, selected_columns]
 
 
+def _list_numeric_filterable_columns(df: pd.DataFrame) -> list[str]:
+    numeric_columns: list[str] = []
+    for column in df.columns:
+        series = pd.to_numeric(df[column], errors="coerce")
+        if series.notna().any():
+            numeric_columns.append(str(column))
+    return numeric_columns
+
+
+def _render_numeric_threshold_filters(
+    df: pd.DataFrame,
+    *,
+    key_prefix: str,
+    title: str = "数值阈值筛选",
+) -> tuple[pd.DataFrame, list[str]]:
+    if df.empty:
+        return df.copy(), []
+
+    numeric_columns = _list_numeric_filterable_columns(df)
+    if not numeric_columns:
+        return df.copy(), []
+
+    summary_lines: list[str] = []
+    selected_columns: list[str] = []
+    filtered_df = df.copy()
+    with st.expander(title, expanded=False):
+        selected_columns = st.multiselect(
+            "选择要启用阈值筛选的数值列",
+            options=numeric_columns,
+            default=[],
+            key=f"{key_prefix}_threshold_columns",
+        )
+        if not selected_columns:
+            st.caption("当前没有启用数值阈值筛选。")
+
+        if selected_columns:
+            mask = pd.Series(True, index=df.index)
+            for column in selected_columns:
+                series = pd.to_numeric(df[column], errors="coerce")
+                finite_values = series.dropna()
+                if finite_values.empty:
+                    continue
+                min_bound = float(finite_values.min())
+                max_bound = float(finite_values.max())
+                step_value = max(abs(max_bound - min_bound) / 100.0, 0.0001)
+                filter_col1, filter_col2 = st.columns(2)
+                lower_value = float(
+                    filter_col1.number_input(
+                        f"{column} 最小值",
+                        value=min_bound,
+                        step=step_value,
+                        key=f"{key_prefix}_{column}_min",
+                    )
+                )
+                upper_value = float(
+                    filter_col2.number_input(
+                        f"{column} 最大值",
+                        value=max_bound,
+                        step=step_value,
+                        key=f"{key_prefix}_{column}_max",
+                    )
+                )
+                applied_lower = min(lower_value, upper_value)
+                applied_upper = max(lower_value, upper_value)
+                if lower_value > upper_value:
+                    st.caption(f"{column} 的上下界已自动交换为 [{_metric_text(applied_lower)}, {_metric_text(applied_upper)}]。")
+                mask = mask & series.notna() & series.ge(applied_lower) & series.le(applied_upper)
+                summary_lines.append(
+                    f"{column} in [{_metric_text(applied_lower)}, {_metric_text(applied_upper)}]"
+                )
+
+            filtered_df = df.loc[mask].copy()
+            st.caption(f"数值阈值筛选后保留 {len(filtered_df)} / {len(df)} 条。")
+
+    return filtered_df, summary_lines
+
+
 def _render_dataframe_view_controls(
     df: pd.DataFrame,
     *,
@@ -5905,6 +5982,11 @@ def main() -> None:
                                 na=False,
                             )
                         ]
+                    ml_df, ml_threshold_summaries = _render_numeric_threshold_filters(
+                        ml_df,
+                        key_prefix="ml_ranking",
+                        title="ML 排名数值阈值筛选",
+                    )
                     ml_view_df, ml_export_df = _render_dataframe_view_controls(
                         ml_df,
                         key_prefix="ml_ranking_view",
@@ -5921,6 +6003,8 @@ def main() -> None:
                         default_sort_column="final_score",
                         default_descending=True,
                     )
+                    if ml_threshold_summaries:
+                        st.caption("已启用阈值: " + "；".join(ml_threshold_summaries))
                     st.caption(
                         f"当前筛选后共 {len(ml_export_df)} 条，当前展示前 {min(int(ranking_preview_rows), len(ml_view_df))} 条；"
                         f"可见列 {len(ml_view_df.columns)} 个。"
@@ -5957,6 +6041,11 @@ def main() -> None:
                                 na=False,
                             )
                         ]
+                    rule_df, rule_threshold_summaries = _render_numeric_threshold_filters(
+                        rule_df,
+                        key_prefix="rule_ranking",
+                        title="Rule 排名数值阈值筛选",
+                    )
                     rule_view_df, rule_export_df = _render_dataframe_view_controls(
                         rule_df,
                         key_prefix="rule_ranking_view",
@@ -5973,6 +6062,8 @@ def main() -> None:
                         default_sort_column="final_rule_score",
                         default_descending=True,
                     )
+                    if rule_threshold_summaries:
+                        st.caption("已启用阈值: " + "；".join(rule_threshold_summaries))
                     st.caption(
                         f"当前筛选后共 {len(rule_export_df)} 条，当前展示前 {min(int(ranking_preview_rows), len(rule_view_df))} 条；"
                         f"可见列 {len(rule_view_df.columns)} 个。"
@@ -6028,6 +6119,11 @@ def main() -> None:
                                     na=False,
                                 )
                         pose_df = pose_df[mask]
+                    pose_df, pose_threshold_summaries = _render_numeric_threshold_filters(
+                        pose_df,
+                        key_prefix="pose_results",
+                        title="Pose 结果数值阈值筛选",
+                    )
                     pose_view_df, pose_export_df = _render_dataframe_view_controls(
                         pose_df,
                         key_prefix="pose_view",
@@ -6046,6 +6142,8 @@ def main() -> None:
                         default_sort_column="pred_prob",
                         default_descending=True,
                     )
+                    if pose_threshold_summaries:
+                        st.caption("已启用阈值: " + "；".join(pose_threshold_summaries))
                     st.caption(
                         f"当前筛选后共 {len(pose_export_df)} 条，当前展示前 {min(int(pose_preview_rows), len(pose_view_df))} 条；"
                         f"可见列 {len(pose_view_df.columns)} 个。"
