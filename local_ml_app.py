@@ -37,6 +37,7 @@ from input_path_repair import (
     apply_input_path_repair_plan,
 )
 from real_data_starter_utils import write_real_data_starter_kit
+from result_tree_io import build_input_table_from_result_tree, find_result_tree_root
 from run_cd38_public_starter import run_cd38_public_starter
 from runtime_dependency_utils import (
     check_runtime_dependencies,
@@ -2268,19 +2269,47 @@ def _build_auto_input_table(
     if detected_paths.get("input_csv_local_path") or detected_paths.get("feature_csv_local_path"):
         return None
 
-    pdb_candidates = sorted(
-        [path for path in bundle_root.rglob("*") if path.is_file() and _is_probable_pose_pdb(path)],
-        key=lambda p: str(p.relative_to(bundle_root)).lower(),
-    )
-    if not pdb_candidates:
-        return None
-
     output_root.mkdir(parents=True, exist_ok=True)
     out_csv = output_root / "auto_input_pose_table.csv"
 
     default_pocket = detected_paths.get("default_pocket_local_path", "")
     default_catalytic = detected_paths.get("default_catalytic_local_path", "")
     default_ligand = detected_paths.get("default_ligand_local_path", "")
+
+    result_tree_root, result_tree_discovery_mode = find_result_tree_root(bundle_root, target_prefix="CD38")
+    if result_tree_root is not None:
+        df, summary = build_input_table_from_result_tree(
+            result_tree_root,
+            default_pocket_file=default_pocket or None,
+            default_catalytic_file=default_catalytic or None,
+            default_ligand_file=default_ligand or None,
+            out_csv_path=out_csv,
+            path_mode="absolute",
+            allow_single_pdb_fallback=False,
+            target_prefix="CD38",
+        )
+        if not df.empty:
+            df.to_csv(out_csv, index=False)
+            return {
+                "generated_csv_path": str(out_csv.resolve()),
+                "row_count": int(len(df)),
+                "pose_pdb_count": int(len(df)),
+                "layout_mode": "canonical_result_tree",
+                "result_tree_root": str(result_tree_root.resolve()),
+                "result_tree_discovery_mode": result_tree_discovery_mode,
+                "default_pocket_file": default_pocket,
+                "default_catalytic_file": default_catalytic,
+                "default_ligand_file": default_ligand,
+                "summary": summary,
+                "preview_rows": df.head(8).to_dict(orient="records"),
+            }
+
+    pdb_candidates = sorted(
+        [path for path in bundle_root.rglob("*") if path.is_file() and _is_probable_pose_pdb(path)],
+        key=lambda p: str(p.relative_to(bundle_root)).lower(),
+    )
+    if not pdb_candidates:
+        return None
 
     rows: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str, str]] = set()
@@ -2464,10 +2493,10 @@ def _apply_bundle_import(report: dict[str, Any]) -> str:
         if value:
             st.session_state[key] = value
 
-    if detected_paths.get("input_csv_local_path") and not detected_paths.get("feature_csv_local_path"):
-        st.session_state["start_mode"] = "input_csv"
-    elif detected_paths.get("feature_csv_local_path") and not detected_paths.get("input_csv_local_path"):
+    if detected_paths.get("feature_csv_local_path"):
         st.session_state["start_mode"] = "feature_csv"
+    elif detected_paths.get("input_csv_local_path"):
+        st.session_state["start_mode"] = "input_csv"
 
     mapped_labels = {
         "input_csv_local_path": "input_csv",
@@ -2485,7 +2514,14 @@ def _apply_bundle_import(report: dict[str, Any]) -> str:
     )
     generated_text = ""
     if generated_input_table is not None:
-        generated_text = f"；已自动生成 input_pose_table.csv（{int(generated_input_table.get('row_count') or 0)} 行）"
+        if str(generated_input_table.get("layout_mode") or "") == "canonical_result_tree":
+            discovery_mode = str(generated_input_table.get("result_tree_discovery_mode") or "direct")
+            generated_text = (
+                "；未发现 pose_features.csv/input_pose_table.csv，"
+                f"已从标准 result 目录自动生成 input_pose_table.csv（{int(generated_input_table.get('row_count') or 0)} 行，{discovery_mode}）"
+            )
+        else:
+            generated_text = f"；已自动生成 input_pose_table.csv（{int(generated_input_table.get('row_count') or 0)} 行）"
     return (
         f"已导入{source_kind_text} {report.get('source_name', '')}，自动识别 {len(detected_paths)} 个输入项："
         + ", ".join(detected_names)
@@ -3141,7 +3177,21 @@ def _render_input_status_panel(
             gen_col1.metric("生成行数", int(generated_input_table.get("row_count") or 0))
             gen_col2.metric("识别 PDB 数", int(generated_input_table.get("pose_pdb_count") or 0))
             generated_csv_path = Path(str(generated_input_table.get("generated_csv_path") or ""))
-            st.caption("自动生成表只做保守推断；运行前仍建议点击“检查当前输入”确认 ID 和路径是否符合预期。")
+            layout_mode = str(generated_input_table.get("layout_mode") or "generic_pdb_scan")
+            if layout_mode == "canonical_result_tree":
+                st.caption("已按标准 result/<vhh>/<CD38_x>/<pose>/<pose>.pdb 目录解析；可以在 result 父目录导入，软件会自动定位 result/。运行前仍建议点击“检查当前输入”确认链和 pocket 默认文件。")
+                result_tree_root = str(generated_input_table.get("result_tree_root") or "")
+                if result_tree_root:
+                    st.caption(f"识别到的标准 result 根目录: {result_tree_root}")
+                summary = generated_input_table.get("summary")
+                if isinstance(summary, dict):
+                    st.caption(
+                        f"标准目录解析: nanobody={int(summary.get('nanobody_count') or 0)}，"
+                        f"CD38 variant={int(summary.get('target_variant_count') or 0)}，"
+                        f"跳过 pose 目录={int(summary.get('pose_dir_skipped_count') or 0)}"
+                    )
+            else:
+                st.caption("自动生成表只做保守推断；运行前仍建议点击“检查当前输入”确认 ID 和路径是否符合预期。")
             st.code(str(generated_csv_path), language="text")
             preview_rows = generated_input_table.get("preview_rows")
             if isinstance(preview_rows, list) and preview_rows:

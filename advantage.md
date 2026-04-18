@@ -134,7 +134,8 @@
 
 - 一个 nanobody 有多个 conformer。
 - 一个 conformer 有多个 docking pose。
-- top pose、平均 top-k、构象一致性和波动都影响最终判断。
+- 在标准 CD38 目录下，每个 `vhh/CD38_i/` 会优先按 `MMPBSA_energy` 选择最低能量 top-k pose。
+- top-k 能量代表 pose 质量筛选，Rule/ML 分数代表阻断倾向，构象一致性和波动共同影响最终判断。
 
 当前项目已经做了：
 
@@ -332,7 +333,7 @@
 
 - 低可信原因拆解。
 - Rule/ML 分歧解释。
-- top-k 分数接近程度。
+- top-k 低能量 pose 的分数接近程度。
 - conformer 间波动解释。
 - pocket overwide 对当前候选的影响说明。
 

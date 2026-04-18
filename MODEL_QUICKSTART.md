@@ -7,6 +7,7 @@
 | 你现在有的文件 | 应该怎么跑 | 说明 |
 |---|---|---|
 | `input_pose_table.csv` 和 PDB 文件 | 用 `--input_csv` | 最推荐，会自动构建特征 |
+| 标准 `A/result/vhh/CD38_x/pose/pose.pdb` 文件夹 | 在本地软件导入 `A/`，或用 `--result_root .` | 软件会自动定位 `A/result/` 并生成输入表 |
 | 已经生成好的 `pose_features.csv` | 用 `--feature_csv` | 跳过特征构建，直接排名和训练 |
 | 只有一堆 PDB 文件 | 先用本地软件导入目录或 zip | 软件会尝试生成 `auto_input_pose_table.csv` |
 | 没有自己的数据，只想试用完整流程 | 运行 `python run_demo_pipeline.py` | 自动生成 synthetic demo 数据并跑完整推荐流程 |
@@ -68,6 +69,55 @@ python run_recommended_pipeline.py --input_csv demo_outputs/REAL_DATA_STARTER/MI
 边界：`MINI_PDB_EXAMPLE` 是 toy 结构包，只用于检查 PDB 解析、链拆分、口袋位点映射、ligand template 和 pipeline 产物生成，不代表真实生物学结论。
 
 ## 0.1 最小输入检查清单
+
+如果你的真实数据已经按下面结构保存，优先使用这个固定格式。推荐在 `result/` 的父目录 `A/` 里运行或导入：
+
+```text
+A/
+  result/
+    vhh1/
+      CD38_1/
+        1/
+          1.pdb
+          FINAL_RESULTS_MMPBSA.dat
+        2/
+          2.pdb
+      CD38_2/
+        1/
+          1.pdb
+```
+
+含义固定如下：
+
+| 目录层级 | 映射到输入表 |
+|---|---|
+| `vhh1` | `nanobody_id` |
+| `CD38_1` | `conformer_id`、`target_variant_id` |
+| `1` | `pose_id`、`pose_index` |
+| `1/1.pdb` | `pdb_path` |
+| `1/FINAL_RESULTS_MMPBSA.dat` | `MMPBSA_energy` |
+
+本地软件左侧“导入目录/zip”选择 `A/` 即可。导入逻辑是：先找 `pose_features.csv`；没有时找 `input_pose_table.csv`；两者都没有时自动识别 `A/result/` 并生成 `auto_input_pose_table.csv`。因此标准目录下不需要手动填写 `input_csv`。
+
+如果用命令行，在 `A/` 目录执行：
+
+```bash
+python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv
+```
+
+如果有统一 CD38 pocket / catalytic 文件，可以一起写入：
+
+```bash
+python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv --default_pocket_file cd38_pocket.txt --default_catalytic_file cd38_catalytic.txt --default_antigen_chain A
+```
+
+然后再跑主流程：
+
+```bash
+python run_recommended_pipeline.py --input_csv input_pose_table.csv --out_dir my_outputs
+```
+
+这里的 `top_k` 对应你的真实目录时，含义是：在每个 `vhh/CD38_i/` 文件夹下，按 `MMPBSA_energy` 从低到高选择 K 个 pose。也就是说 `top_k=3` 会从每个 `CD38_1`、`CD38_2`、`CD38_3` 的 10 个 pose 中各选 MMPBSA 最低的 3 个。若没有 `MMPBSA_energy` / `mmgbsa` 能量列，系统才会回退到模型或规则分数最高的 K 个 pose。
 
 | 检查项 | 要求 |
 |---|---|
@@ -510,6 +560,7 @@ python run_recommended_pipeline.py --feature_csv pose_features.csv --out_dir my_
 - `ligand_path_min_clearance`
 - `min_distance_to_pocket`
 - `rsite_accuracy`
+- `MMPBSA_energy`
 - `mmgbsa`
 - `interface_dg`
 
@@ -524,7 +575,7 @@ python run_recommended_pipeline.py --feature_csv pose_features.csv --out_dir my_
 下面是当前仓库 smoke test 里实际生成的 `pose_features.csv` 表头：
 
 ```csv
-nanobody_id,conformer_id,pose_id,status,pocket_hit_fraction,catalytic_hit_fraction,mouth_occlusion_score,mouth_axis_block_fraction,mouth_aperture_block_fraction,mouth_min_clearance,delta_pocket_occupancy_proxy,substrate_overlap_score,ligand_path_block_score,ligand_path_block_fraction,ligand_path_bottleneck_score,ligand_path_exit_block_fraction,ligand_path_min_clearance,min_distance_to_pocket,rsite_accuracy,mmgbsa,interface_dg,hdock_score,label
+nanobody_id,conformer_id,pose_id,status,pocket_hit_fraction,catalytic_hit_fraction,mouth_occlusion_score,mouth_axis_block_fraction,mouth_aperture_block_fraction,mouth_min_clearance,delta_pocket_occupancy_proxy,substrate_overlap_score,ligand_path_block_score,ligand_path_block_fraction,ligand_path_bottleneck_score,ligand_path_exit_block_fraction,ligand_path_min_clearance,min_distance_to_pocket,rsite_accuracy,MMPBSA_energy,mmgbsa,interface_dg,hdock_score,label
 ```
 
 ## 5. 跑完后先看什么
@@ -576,8 +627,10 @@ nanobody_id,conformer_id,pose_id,status,pocket_hit_fraction,catalytic_hit_fracti
 示例表头：
 
 ```csv
-nanobody_id,conformer_id,pose_id,pred_prob,pred_logit,top_contributing_features,pocket_hit_fraction,catalytic_hit_fraction,mouth_occlusion_score,mouth_axis_block_fraction,mouth_aperture_block_fraction,mouth_min_clearance,substrate_overlap_score,ligand_path_block_score,ligand_path_block_fraction,ligand_path_bottleneck_score,ligand_path_exit_block_fraction,ligand_path_min_clearance,delta_pocket_occupancy_proxy,min_distance_to_pocket,rsite_accuracy,label,pseudo_label,pseudo_score,pseudo_rank,pseudo_components
+nanobody_id,conformer_id,pose_id,pred_prob,pred_logit,top_contributing_features,pocket_hit_fraction,catalytic_hit_fraction,mouth_occlusion_score,mouth_axis_block_fraction,mouth_aperture_block_fraction,mouth_min_clearance,substrate_overlap_score,ligand_path_block_score,ligand_path_block_fraction,ligand_path_bottleneck_score,ligand_path_exit_block_fraction,ligand_path_min_clearance,delta_pocket_occupancy_proxy,min_distance_to_pocket,rsite_accuracy,MMPBSA_energy,mmgbsa,label,pseudo_label,pseudo_score,pseudo_rank,pseudo_components
 ```
+
+如果输入表或标准 `result/` 目录提供了 `MMPBSA_energy` / `mmgbsa`，后续 conformer 聚合会优先按这些能量列从低到高选 top-k pose。
 
 ### 6.2 `nanobody_ranking.csv`
 
@@ -595,6 +648,8 @@ nanobody_id,conformer_id,pose_id,pred_prob,pred_logit,top_contributing_features,
 ```csv
 rank,nanobody_id,num_conformers,best_conformer,best_pose_id,best_pose_prob,mean_conformer_score,best_conformer_score,std_conformer_score,pocket_consistency_score,final_score,explanation,w_mean,w_best,w_consistency,w_std_penalty,mean_topk_pocket_hit_fraction,mean_topk_catalytic_hit_fraction,mean_topk_mouth_occlusion_score,mean_topk_mouth_axis_block_fraction,mean_topk_mouth_aperture_block_fraction,mean_topk_mouth_min_clearance,mean_topk_substrate_overlap_score,mean_topk_ligand_path_block_score,mean_topk_ligand_path_block_fraction,mean_topk_ligand_path_bottleneck_score,mean_topk_ligand_path_exit_block_fraction,mean_topk_ligand_path_min_clearance,mean_topk_delta_pocket_occupancy_proxy,mean_topk_pocket_block_volume_proxy,mean_pocket_hit_fraction,mean_catalytic_hit_fraction,mean_mouth_occlusion_score,mean_substrate_overlap_score
 ```
+
+如果要确认 top-k 到底选了哪些 pose，看 `my_outputs/ml_ranking_outputs/conformer_scores.csv` 或 `my_outputs/rule_outputs/conformer_rule_scores.csv` 里的 `topk_selection_mode`、`topk_selection_column`、`topk_pose_ids` 和 `mean_topk_MMPBSA_energy`。
 
 ## 7. 你只需要记住的最短版本
 

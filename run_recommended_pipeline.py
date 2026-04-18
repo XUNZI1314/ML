@@ -79,6 +79,11 @@ def _build_parser() -> argparse.ArgumentParser:
     # shared ranking/train options
     parser.add_argument("--top_k", type=int, default=3)
     parser.add_argument(
+        "--top_k_selection_col",
+        default="auto",
+        help="Top-k selector. auto uses MMPBSA_energy/mmgbsa ascending when present, otherwise score descending.",
+    )
+    parser.add_argument(
         "--pocket_overwide_penalty_weight",
         type=float,
         default=0.0,
@@ -249,6 +254,7 @@ def run_recommended_pipeline(
     default_nanobody_chain: str | None = None,
     skip_failed_rows: bool = False,
     top_k: int = 3,
+    top_k_selection_col: str = "auto",
     pocket_overwide_penalty_weight: float = 0.0,
     pocket_overwide_threshold: float = 0.55,
     train_epochs: int = 20,
@@ -411,6 +417,8 @@ def run_recommended_pipeline(
                 str(rule_out),
                 "--top_k",
                 str(int(top_k)),
+                "--top_k_selection_col",
+                str(top_k_selection_col or "auto"),
                 "--pocket_overwide_penalty_weight",
                 str(float(pocket_overwide_penalty_weight)),
                 "--pocket_overwide_threshold",
@@ -457,6 +465,8 @@ def run_recommended_pipeline(
                 str(ml_rank_out),
                 "--top_k",
                 str(int(top_k)),
+                "--top_k_selection_col",
+                str(top_k_selection_col or "auto"),
                 "--pocket_overwide_penalty_weight",
                 str(float(pocket_overwide_penalty_weight)),
                 "--pocket_overwide_threshold",
@@ -915,6 +925,7 @@ def run_recommended_pipeline(
         "strategy_seed": strategy_seed_applied,
         "ranking_config": {
             "top_k": int(top_k),
+            "top_k_selection_col": str(top_k_selection_col or "auto"),
             "pocket_overwide_penalty_weight": float(pocket_overwide_penalty_weight),
             "pocket_overwide_threshold": float(pocket_overwide_threshold),
         },
@@ -1251,6 +1262,7 @@ def main(argv: list[str] | None = None) -> None:
         default_nanobody_chain=args.default_nanobody_chain,
         skip_failed_rows=bool(args.skip_failed_rows),
         top_k=int(args.top_k),
+        top_k_selection_col=str(args.top_k_selection_col),
         pocket_overwide_penalty_weight=float(args.pocket_overwide_penalty_weight),
         pocket_overwide_threshold=float(args.pocket_overwide_threshold),
         train_epochs=int(args.train_epochs),

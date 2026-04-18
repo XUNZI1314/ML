@@ -8,6 +8,7 @@
 |---|---|
 | [README.md](README.md) | 项目总览和完整功能清单 |
 | [MODEL_QUICKSTART.md](MODEL_QUICKSTART.md) | 最短命令行使用方式 |
+| [RESULT_TREE_STANDARD.md](RESULT_TREE_STANDARD.md) | 标准 `A/result/vhh/CD38_x/pose/pose.pdb` 批量目录格式 |
 | [run.md](run.md) | 本地软件打开方式 |
 | [advantage.md](advantage.md) | 项目定位、优势和短板 |
 | [not_perfect.md](not_perfect.md) | 后续推进项和未收尾问题 |
@@ -23,6 +24,9 @@
 ```text
 输入数据
   |
+  |-- A/result/<nanobody_id>/<CD38_variant>/<pose_id>/<pose_id>.pdb
+  |     |  optional: local app auto import or build_input_from_result_tree.py
+  |     v
   |-- input_pose_table.csv
   |-- PDB complex files
   |-- pocket / catalytic / ligand template files
@@ -99,6 +103,18 @@ python run_recommended_pipeline.py ^
 
 ## 3. 输入层
 
+如果真实数据已经按 `A/result/vhh1/CD38_1/1/1.pdb` 这种目录保存，可以在本地软件导入父目录 `A/`。软件会先找 `pose_features.csv`，没有时找 `input_pose_table.csv`，两者都没有时自动定位 `A/result/` 并生成输入表。
+
+命令行也可以在 `A/` 目录使用标准目录转换器：
+
+```bash
+python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv
+```
+
+详细目录约定见 [RESULT_TREE_STANDARD.md](RESULT_TREE_STANDARD.md)。转换后仍然走同一条 `input_pose_table.csv -> pose_features.csv -> Rule/ML/Consensus` 主链路。
+
+在这个标准目录下，`top_k` 的准确含义是：每个 `vhh/CD38_i/` 文件夹内按 `MMPBSA_energy` 选最低的 K 个 pose。`MMPBSA_energy` 可以由 `FINAL_RESULTS_MMPBSA.dat` 自动解析，也可以提前整理到 `pose_features.csv`。如果没有能量列，才回退到 Rule/ML 分数最高的 K 个 pose。
+
 ### 3.1 最小输入表
 
 `build_feature_table.py` 要求最少有这些列：
@@ -125,6 +141,7 @@ python run_recommended_pipeline.py ^
 | `buried_sasa` | 可选界面埋藏面积 |
 | `iptm`, `pae`, `plddt` | 可选 AlphaFold / 结构可信度特征 |
 | `label` | 可选真实标签，存在时用于监督训练、校准和 benchmark |
+| `MMPBSA_energy` | 可选；越低越好。存在时 Top-K pose 选择优先按它升序选择 |
 
 ### 3.2 pocket 文本格式
 
@@ -218,6 +235,7 @@ ligand_path_exit_block_fraction
 ligand_path_min_clearance
 min_distance_to_pocket
 rsite_accuracy
+MMPBSA_energy
 mmgbsa
 interface_dg
 ```
@@ -331,6 +349,7 @@ ligand_path_min_clearance
 min_distance_to_pocket
 rsite_accuracy
 hdock_score
+MMPBSA_energy
 mmgbsa
 interface_dg
 ```
@@ -433,10 +452,11 @@ nanobody_id -> 是否值得优先做实验
 对每个 `(nanobody_id, conformer_id)`：
 
 ```text
-1. 按 pred_prob 从高到低排序
-2. 取 top_k 个 pose，默认 top_k=3
-3. 计算 mean_topk_pred_prob 和 best_pose_prob
-4. 可选融合 geo_aux_score
+1. 如果存在 MMPBSA_energy / mmgbsa，按能量从低到高排序
+2. 没有能量列时，才按 pred_prob 从高到低排序
+3. 取 top_k 个 pose，默认 top_k=3
+4. 计算 mean_topk_pred_prob、mean_topk_MMPBSA_energy 和 best_pose_prob
+5. 可选融合 geo_aux_score
 ```
 
 conformer 分数：

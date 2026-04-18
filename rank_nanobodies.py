@@ -22,6 +22,7 @@ from ranking_common import (
     compute_consistency_score,
     compute_weighted_scaled_mean,
     safe_mean_if_exists,
+    select_topk_pose_rows,
     to_numeric as _to_numeric,
 )
 
@@ -86,6 +87,7 @@ def _validate_pose_df(df: pd.DataFrame) -> pd.DataFrame:
 def aggregate_conformer_scores(
     pose_df: pd.DataFrame,
     top_k: int = 3,
+    top_k_selection_col: str = "auto",
     blend_optional: bool = True,
     optional_weight: float = 0.15,
     pocket_overwide_penalty_weight: float = 0.0,
@@ -94,8 +96,8 @@ def aggregate_conformer_scores(
     """Aggregate pose-level predictions into conformer-level scores.
 
     For each (nanobody_id, conformer_id):
-    1) sort poses by pred_prob descending
-    2) take top-k poses
+    1) select lowest-k MMPBSA poses when an energy column exists
+    2) otherwise fall back to pred_prob descending
     3) compute top-k summary stats
     4) compute conformer_score with interpretable fusion:
 
@@ -137,15 +139,24 @@ def aggregate_conformer_scores(
             "pocket_shape_residue_count",
             "pocket_shape_overwide_proxy",
             "pocket_shape_tightness_proxy",
+            "MMPBSA_energy",
+            "mmpbsa_energy",
+            "MMGBSA_energy",
+            "mmgbsa_energy",
+            "mmgbsa",
         ]
         if c in df.columns
     ]
 
     rows: list[dict[str, Any]] = []
     for (nanobody_id, conformer_id), g in df.groupby(["nanobody_id", "conformer_id"], sort=False):
-        g_sorted = g.sort_values(by="pred_prob", ascending=False).reset_index(drop=True)
-        k = min(int(top_k), len(g_sorted))
-        top = g_sorted.iloc[:k]
+        top, topk_info = select_topk_pose_rows(
+            g,
+            top_k=int(top_k),
+            score_col="pred_prob",
+            selection_col=str(top_k_selection_col or "auto"),
+        )
+        k = int(topk_info["top_k_used"])
         best_pose = top.iloc[0]
 
         mean_topk_pred_prob = safe_mean_if_exists(top, "pred_prob")
@@ -154,8 +165,10 @@ def aggregate_conformer_scores(
         row: dict[str, Any] = {
             "nanobody_id": str(nanobody_id),
             "conformer_id": str(conformer_id),
-            "num_poses": int(len(g_sorted)),
+            "num_poses": int(len(g)),
             "top_k_used": int(k),
+            "topk_selection_mode": str(topk_info["topk_selection_mode"]),
+            "topk_selection_column": str(topk_info["topk_selection_column"]),
             "topk_pose_ids": "|".join(map(str, top["pose_id"].tolist())),
             "best_pose_id": str(best_pose["pose_id"]),
             "best_pose_prob": best_pose_prob,
@@ -400,7 +413,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Aggregate and rank nanobody predictions")
     parser.add_argument("--pred_csv", required=True, help="Path to pose_predictions.csv")
     parser.add_argument("--out_dir", default=".", help="Directory to save ranking outputs")
-    parser.add_argument("--top_k", type=int, default=3, help="Top-k poses per conformer")
+    parser.add_argument("--top_k", type=int, default=3, help="Lowest-k MMPBSA poses per conformer when energy is available")
+    parser.add_argument(
+        "--top_k_selection_col",
+        default="auto",
+        help="Top-k selector. auto uses MMPBSA_energy/mmgbsa ascending when present, otherwise pred_prob descending.",
+    )
 
     # Conformer fusion controls.
     parser.add_argument(
@@ -461,6 +479,7 @@ def main() -> None:
     conformer_df = aggregate_conformer_scores(
         pose_df,
         top_k=int(args.top_k),
+        top_k_selection_col=str(args.top_k_selection_col),
         blend_optional=not bool(args.disable_optional_blend),
         optional_weight=float(args.optional_weight),
         pocket_overwide_penalty_weight=float(args.pocket_overwide_penalty_weight),

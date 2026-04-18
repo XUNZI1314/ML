@@ -2,7 +2,7 @@
 
 这个文件说明的是一个临时兜底方案：
 
-- 当前仓库已经有完整说明文档：`README.md`、`MODEL_QUICKSTART.md`、`run.md`、`ML.md`、`CD38.md`、`advantage.md`、`not_perfect.md` 和 `benchmarks/cd38/README.md`。
+- 当前仓库已经有完整说明文档：`README.md`、`MODEL_QUICKSTART.md`、`RESULT_TREE_STANDARD.md`、`run.md`、`ML.md`、`CD38.md`、`advantage.md`、`not_perfect.md` 和 `benchmarks/cd38/README.md`。
 - 如果当前机器无法直接完成 `git push` 全量同步，可以先把完整源码打包成 `ML_source_bundle.zip.base64` 放到仓库。
 - 这样至少可以保证 GitHub 仓库里已经保存了一份完整源码快照。
 
@@ -21,6 +21,7 @@
 |---|---|
 | `README.md` | 项目总览、功能清单和长版命令说明 |
 | `MODEL_QUICKSTART.md` | 最短模型运行路径 |
+| `RESULT_TREE_STANDARD.md` | 标准 `A/result/vhh/CD38_x/pose/pose.pdb` 批量目录格式和父目录自动导入规则 |
 | `run.md` | 本地软件打开方法 |
 | `ML.md` | ML 架构、模型训练和排序逻辑 |
 | `CD38.md` | CD38 当前能力、benchmark 结果边界和下一步补齐路径 |

@@ -52,6 +52,8 @@ def build_feature_direction_map() -> dict[str, tuple[int, float]]:
         "min_distance_to_pocket": (-1, 0.08),
         "rsite_accuracy": (+1, 0.06),
         "hdock_score": (-1, 0.06),
+        "MMPBSA_energy": (-1, 0.05),
+        "mmpbsa_energy": (-1, 0.05),
         "mmgbsa": (-1, 0.05),
         "interface_dg": (-1, 0.03),
     }
@@ -1281,6 +1283,11 @@ def main() -> None:
         "pocket_block_volume_proxy",
         "min_distance_to_pocket",
         "rsite_accuracy",
+        "MMPBSA_energy",
+        "mmpbsa_energy",
+        "MMGBSA_energy",
+        "mmgbsa_energy",
+        "mmgbsa",
     ]
     for col in passthrough_optional_cols:
         if col in df_for_train.columns and col not in pred_df.columns:

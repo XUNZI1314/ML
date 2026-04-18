@@ -18,4 +18,9 @@ recommended_pipeline_test*/
 annotation_export_test/outputs*/
 validation_tmp*/
 
+# Large real-data batch trees stay local; use build_input_from_result_tree.py
+# to convert them into input_pose_table.csv.
+result/
+result_tree_inputs/
+
 *.log

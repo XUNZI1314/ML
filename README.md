@@ -14,6 +14,7 @@
 | 直接打开本地软件 | [run.md](run.md) | 双击 `portable_dist\standalone_onefile\ML_Local_App_Standalone.exe`，没有单文件版就双击 `start_local_app.bat` |
 | 没有数据，先看完整效果 | 本 README / [MODEL_QUICKSTART.md](MODEL_QUICKSTART.md) | `python run_demo_pipeline.py`，或双击 `run_demo_pipeline.bat` |
 | 用最少命令跑模型 | [MODEL_QUICKSTART.md](MODEL_QUICKSTART.md) | `python run_recommended_pipeline.py --input_csv input_pose_table.csv --out_dir my_outputs` |
+| 导入标准 CD38 结果目录 | [RESULT_TREE_STANDARD.md](RESULT_TREE_STANDARD.md) | 在 `A/` 导入或运行 `python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv` |
 | 理解 ML 具体架构 | [ML.md](ML.md) | 先看总体数据流，再看 Rule、MLP、聚合和共识层 |
 | 理解整个项目功能 | 本 README | 先看“当前推荐使用路径”，再按需看 CLI 和输入输出契约 |
 | 继续开发下一步 | [not_perfect.md](not_perfect.md) | 默认优先推进真实 fpocket/P2Rank 输出导入和 benchmark 完整化 |
@@ -31,7 +32,7 @@ python run_demo_pipeline.py
 
 如果你正在使用本地软件，也可以在左侧“没有数据时”点击“生成并立即运行 demo”；如果想先检查参数，则点击“生成并载入 demo 输入”，再手动点击“立即运行”。
 
-1. 准备 `input_pose_table.csv`，至少包含 `nanobody_id`、`conformer_id`、`pose_id`、`pdb_path`。
+1. 准备 `input_pose_table.csv`，至少包含 `nanobody_id`、`conformer_id`、`pose_id`、`pdb_path`。如果数据是 `A/result/vhh/CD38_x/pose/pose.pdb` 结构，可以在本地软件导入 `A/` 自动生成输入表；命令行则在 `A/` 运行 `python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv`。
 2. 运行 `python run_recommended_pipeline.py --input_csv input_pose_table.csv --out_dir my_outputs`。
 3. 先打开 `my_outputs/recommended_pipeline_report.md`，确认流程是否完整跑完。
 4. 再看 `my_outputs/batch_decision_summary/batch_decision_summary.md`，快速判断本批次能不能解读、优先看谁、先修什么风险。
@@ -177,7 +178,7 @@ python run_demo_pipeline.py
 - 从输入 pose 表逐行构建特征
 - 与 pdb_parser/pocket_io/geometry_features 串联
 - 自动合并可选数值列
-- hdock_score/mmgbsa/interface_dg/rsite_accuracy/label 等
+- hdock_score/MMPBSA_energy/mmgbsa/interface_dg/rsite_accuracy/label 等
 - 行级故障隔离
 - 单行失败不影响全表
 - 输出 status/error_message/warning_message
@@ -233,8 +234,11 @@ python run_demo_pipeline.py
 
 已实现能力:
 - pose -> conformer 聚合
-- 按 pred_prob 选 top-k
+- 优先按 `MMPBSA_energy` / `mmgbsa` 低能量选择每个 conformer 下的 top-k pose
+- 无能量列时回退为按 pred_prob 选 top-k
+- 输出 topk_selection_mode / topk_selection_column 便于审计
 - 计算 mean_topk_pred_prob/best_pose_prob
+- 计算 mean_topk_MMPBSA_energy（当能量列存在）
 - 聚合 top-k 几何均值
 - mean_topk_pocket_hit_fraction
 - mean_topk_catalytic_hit_fraction
@@ -851,7 +855,9 @@ score = sum(w_f * aligned_f) / sum(w_f over finite aligned_f)
 conformer_score = (1 - w_geo) * (0.7 * topk_mean + 0.3 * top1_best) + w_geo * geo_aux
 
 说明:
-- topk_mean 来自 top-k pose
+- top-k pose 在标准 `A/result/vhh/CD38_i/pose/pose.pdb` 目录下优先按 `MMPBSA_energy` / `mmgbsa` 从低到高选择
+- 如果没有能量列，top-k pose 才按 Rule/ML 分数从高到低选择
+- topk_mean 来自选中的 top-k pose
 - top1_best 为最佳 pose 分数
 - geo_aux 为 pocket/catalytic/mouth/substrate 等几何辅助信号
 
@@ -904,6 +910,7 @@ python rule_ranker.py --feature_csv pose_features.csv --out_dir rule_outputs
 
 常用参数:
 - --top_k
+- --top_k_selection_col
 - --lower_q / --upper_q
 - --conformer_geo_weight
 - --pocket_overwide_penalty_weight / --pocket_overwide_threshold
@@ -932,6 +939,7 @@ python rank_nanobodies.py --pred_csv model_outputs/pose_predictions.csv --out_di
 
 常用参数:
 - --top_k
+- --top_k_selection_col
 - --optional_weight
 - --disable_optional_blend
 - --pocket_overwide_penalty_weight / --pocket_overwide_threshold
@@ -1364,15 +1372,17 @@ start_local_app.bat
 
 特点:
 - 不改现有 `build_feature_table.py` / `rule_ranker.py` / `train_pose_model.py` / `rank_nanobodies.py` 主链路
-- 页面里可选择从 `input_csv` 或 `pose_features.csv` 启动
+- 页面里可选择从 `input_csv` 或 `pose_features.csv` 启动；如果导入目录里已有 `pose_features.csv`，会优先直接使用特征表
 - 支持上传文件，也支持直接填写本机文件路径
 - 支持导入单个 zip 数据包，并自动回填 `input_csv` / `feature_csv` / 默认文件路径
 - 支持直接填写一个本地数据目录路径并自动扫描、回填输入
-- 当导入源没有现成 `input_pose_table.csv` / `pose_features.csv`、但能识别到 PDB 文件时，会自动生成 `auto_input_pose_table.csv`
-- 自动生成的输入表会保守填入 `nanobody_id` / `conformer_id` / `pose_id` / `pdb_path`，并尽量复用识别到的 `pocket` / `catalytic` / `ligand` 默认文件
+- 当导入源没有现成 `pose_features.csv` / `input_pose_table.csv`、但能识别到标准 `A/result/vhh/CD38_i/pose/pose.pdb` 或普通 PDB 文件时，会自动生成 `auto_input_pose_table.csv`
+- 标准 `result/` 目录可从父目录 `A/` 自动定位，会按 `vhh -> CD38_i -> pose` 固定映射 ID，并解析 `FINAL_RESULTS_MMPBSA.dat` 为 `MMPBSA_energy`
+- 普通 PDB 扫描会保守填入 `nanobody_id` / `conformer_id` / `pose_id` / `pdb_path`，并尽量复用识别到的 `pocket` / `catalytic` / `ligand` 默认文件
 - 支持直接下载 `input_csv` / `pose_features.csv` 模板，减少手工整理格式
 - 支持填写常用参数：
-  - `top_k`
+  - `top_k`：标准 CD38 目录下表示每个 `vhh/CD38_i/` 中 MMPBSA 最低的 K 个 pose
+  - `top_k_selection_col`：默认 `auto`，优先用 `MMPBSA_energy` / `mmgbsa`
   - `train_epochs`
   - `train_batch_size`
   - `train_val_ratio`
@@ -1618,7 +1628,7 @@ python benchmark_pose_pipeline.py --feature_csv pose_features.csv --out_dir benc
 - --epochs --batch_size --lr --weight_decay
 - --soft_target_weight
 - --pseudo_threshold_mode --pseudo_threshold_value
-- --top_k --optional_weight
+- --top_k --top_k_selection_col --optional_weight
 - --w_mean --w_best --w_consistency --w_std_penalty
 - --consistency_hit_threshold
 - --reliability_bins

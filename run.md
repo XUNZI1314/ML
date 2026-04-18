@@ -217,6 +217,27 @@ demo_outputs\DEMO_README.md
 
 ---
 
+## 有真实 result 目录时
+
+如果你的数据已经整理成：
+
+```text
+A\result\vhh1\CD38_1\1\1.pdb
+A\result\vhh1\CD38_1\1\FINAL_RESULTS_MMPBSA.dat
+```
+
+可以直接在本地软件左侧“导入目录/zip”选择父目录 `A\`。软件会先找 `pose_features.csv`，没有时找 `input_pose_table.csv`，两者都没有时自动识别 `A\result\`，生成 `auto_input_pose_table.csv`，并把 `FINAL_RESULTS_MMPBSA.dat` 解析为 `MMPBSA_energy`。
+
+也可以先用命令生成输入表：
+
+```powershell
+python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv
+```
+
+后续 `top_k` 的含义固定为：每个 `vhh/CD38_i/` 下面按 `MMPBSA_energy` 选最低的 K 个 pose；没有能量列时才回退到 Rule/ML 分数。
+
+---
+
 ## 启动前快速检查
 
 如果你担心打不开，可以先做自检。

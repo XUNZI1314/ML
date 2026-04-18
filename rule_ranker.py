@@ -23,6 +23,7 @@ from ranking_common import (
     compute_consistency_score,
     compute_weighted_scaled_mean,
     safe_mean_if_exists,
+    select_topk_pose_rows,
     to_numeric as _to_numeric,
 )
 
@@ -46,6 +47,8 @@ DEFAULT_RULE_FEATURE_SPECS: dict[str, tuple[int, float]] = {
     "ligand_path_min_clearance": (-1, 0.03),
     "min_distance_to_pocket": (-1, 0.08),
     "rsite_accuracy": (+1, 0.06),
+    "MMPBSA_energy": (-1, 0.05),
+    "mmpbsa_energy": (-1, 0.05),
     "mmgbsa": (-1, 0.05),
     "interface_dg": (-1, 0.03),
 }
@@ -222,6 +225,7 @@ def build_explanation_text(row: pd.Series, std_ref: float = np.nan) -> str:
 def aggregate_rule_scores(
     pose_rule_df: pd.DataFrame,
     top_k: int = 3,
+    top_k_selection_col: str = "auto",
     conformer_geo_weight: float = 0.15,
     pocket_overwide_penalty_weight: float = 0.0,
     pocket_overwide_threshold: float = 0.55,
@@ -266,9 +270,13 @@ def aggregate_rule_scores(
 
     conformer_rows: list[dict[str, Any]] = []
     for (nanobody_id, conformer_id), g in df.groupby(["nanobody_id", "conformer_id"], sort=False):
-        g_sorted = g.sort_values(by="rule_blocking_score", ascending=False).reset_index(drop=True)
-        k = min(int(top_k), len(g_sorted))
-        top = g_sorted.iloc[:k]
+        top, topk_info = select_topk_pose_rows(
+            g,
+            top_k=int(top_k),
+            score_col="rule_blocking_score",
+            selection_col=str(top_k_selection_col or "auto"),
+        )
+        k = int(topk_info["top_k_used"])
         best = top.iloc[0]
 
         mean_topk_rule = safe_mean_if_exists(top, "rule_blocking_score")
@@ -278,8 +286,10 @@ def aggregate_rule_scores(
         row: dict[str, Any] = {
             "nanobody_id": str(nanobody_id),
             "conformer_id": str(conformer_id),
-            "num_poses": int(len(g_sorted)),
+            "num_poses": int(len(g)),
             "top_k_used": int(k),
+            "topk_selection_mode": str(topk_info["topk_selection_mode"]),
+            "topk_selection_column": str(topk_info["topk_selection_column"]),
             "topk_pose_ids": "|".join(map(str, top["pose_id"].tolist())),
             "best_pose_id": str(best["pose_id"]),
             "best_pose_prob": best_pose_prob,
@@ -307,6 +317,8 @@ def aggregate_rule_scores(
             "pocket_shape_residue_count",
             "pocket_shape_overwide_proxy",
             "pocket_shape_tightness_proxy",
+            "MMPBSA_energy",
+            "mmpbsa_energy",
             "mmgbsa",
             "interface_dg",
         ]:
@@ -507,7 +519,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--feature_csv", required=True, help="Path to pose_features.csv")
     parser.add_argument("--out_dir", default="rule_outputs", help="Directory for output CSVs")
 
-    parser.add_argument("--top_k", type=int, default=3, help="Top-k poses per conformer")
+    parser.add_argument("--top_k", type=int, default=3, help="Lowest-k MMPBSA poses per conformer when energy is available")
+    parser.add_argument(
+        "--top_k_selection_col",
+        default="auto",
+        help="Top-k selector. auto uses MMPBSA_energy/mmgbsa ascending when present, otherwise rule score descending.",
+    )
     parser.add_argument("--lower_q", type=float, default=0.01, help="Lower quantile for robust normalization")
     parser.add_argument("--upper_q", type=float, default=0.99, help="Upper quantile for robust normalization")
 
@@ -562,6 +579,7 @@ def main() -> None:
     conformer_rule_df, nanobody_rule_df = aggregate_rule_scores(
         pose_rule_df,
         top_k=int(args.top_k),
+        top_k_selection_col=str(args.top_k_selection_col),
         conformer_geo_weight=float(args.conformer_geo_weight),
         pocket_overwide_penalty_weight=float(args.pocket_overwide_penalty_weight),
         pocket_overwide_threshold=float(args.pocket_overwide_threshold),

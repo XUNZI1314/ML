@@ -27,6 +27,15 @@ CONSISTENCY_WEIGHTS: dict[str, float] = {
     "mean_topk_ligand_path_exit_block_fraction": 0.05,
 }
 
+TOPK_ENERGY_COLUMNS = [
+    "MMPBSA_energy",
+    "mmpbsa_energy",
+    "MMGBSA_energy",
+    "mmgbsa_energy",
+    "mmgbsa",
+    "MMGBSA",
+]
+
 
 def to_numeric(series: pd.Series) -> pd.Series:
     """Convert a Series to numeric with coercion."""
@@ -39,6 +48,75 @@ def safe_mean_if_exists(df: pd.DataFrame, column: str) -> float:
         return float("nan")
     vals = to_numeric(df[column])
     return float(vals.mean()) if vals.notna().any() else float("nan")
+
+
+def select_topk_pose_rows(
+    group: pd.DataFrame,
+    *,
+    top_k: int,
+    score_col: str,
+    selection_col: str = "auto",
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Select top-k poses for one conformer/CD38_i folder.
+
+    Default semantics for the real result tree are: choose the lowest-k
+    MMPBSA poses inside one result/<vhh>/<CD38_i>/ folder. If no energy column
+    exists, fall back to the supplied score column descending.
+    """
+    if top_k <= 0:
+        raise ValueError("top_k must be positive.")
+    if group.empty:
+        raise ValueError("group is empty.")
+    if score_col not in group.columns:
+        raise ValueError(f"score_col not found: {score_col}")
+
+    df = group.copy()
+    df["__topk_score_value"] = to_numeric(df[score_col])
+    selector = str(selection_col or "auto").strip()
+    selector_lower = selector.lower()
+    selected_col: str | None = None
+    selected_mode = "score_desc"
+
+    if selector_lower not in {"", "auto", "score", score_col.lower()}:
+        if selector not in df.columns:
+            raise ValueError(f"top-k selection column not found: {selector}")
+        selected_col = selector
+        selected_mode = "custom_asc"
+    elif selector_lower in {"", "auto"}:
+        for col in TOPK_ENERGY_COLUMNS:
+            if col not in df.columns:
+                continue
+            if to_numeric(df[col]).notna().any():
+                selected_col = col
+                selected_mode = "energy_asc"
+                break
+
+    if selected_col is not None:
+        df["__topk_selection_value"] = to_numeric(df[selected_col])
+        finite_mask = df["__topk_selection_value"].notna()
+        if finite_mask.any():
+            df["__topk_missing_selection"] = (~finite_mask).astype(int)
+            sorted_df = df.sort_values(
+                by=["__topk_missing_selection", "__topk_selection_value", "__topk_score_value"],
+                ascending=[True, True, False],
+                na_position="last",
+            ).reset_index(drop=True)
+        else:
+            selected_col = None
+            selected_mode = "score_desc"
+            sorted_df = df.sort_values(by="__topk_score_value", ascending=False, na_position="last").reset_index(drop=True)
+    else:
+        sorted_df = df.sort_values(by="__topk_score_value", ascending=False, na_position="last").reset_index(drop=True)
+
+    k = min(int(top_k), len(sorted_df))
+    top = sorted_df.iloc[:k].copy()
+    top = top.drop(columns=[c for c in top.columns if c.startswith("__topk_")], errors="ignore")
+    info = {
+        "top_k_used": int(k),
+        "topk_selection_mode": selected_mode,
+        "topk_selection_column": selected_col or score_col,
+    }
+    return top, info
 
 
 def compute_weighted_scaled_mean(

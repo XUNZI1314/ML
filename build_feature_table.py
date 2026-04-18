@@ -35,6 +35,10 @@ REQUIRED_INPUT_COLUMNS = [
 
 OPTIONAL_HINT_NUMERIC_COLUMNS = [
     "hdock_score",
+    "MMPBSA_energy",
+    "mmpbsa_energy",
+    "MMGBSA_energy",
+    "mmgbsa_energy",
     "mmgbsa",
     "interface_dg",
     "buried_sasa",
@@ -116,6 +120,11 @@ def detect_optional_numeric_columns(df: pd.DataFrame) -> list[str]:
         "split_mode",
         "geometry_debug_summary",
         "_row_index",
+        "target_variant_index",
+        "pose_index",
+        "sidecar_file_count",
+        "mmpbsa_parse_status",
+        "mmpbsa_parse_warning",
     }
 
     numeric_cols: list[str] = []
