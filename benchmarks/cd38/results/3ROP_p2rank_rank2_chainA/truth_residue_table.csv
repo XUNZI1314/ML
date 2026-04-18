@@ -1,0 +1,8 @@
+label,requested_key,matched_key,uid,chain_id,resseq,icode,resname
+truth,A:125,A:125,A:125:_:TRP:ATOM,A,125,,TRP
+truth,A:127,A:127,A:127:_:ARG:ATOM,A,127,,ARG
+truth,A:146,A:146,A:146:_:GLU:ATOM,A,146,,GLU
+truth,A:155,A:155,A:155:_:ASP:ATOM,A,155,,ASP
+truth,A:189,A:189,A:189:_:TRP:ATOM,A,189,,TRP
+truth,A:193,A:193,A:193:_:SER:ATOM,A,193,,SER
+truth,A:226,A:226,A:226:_:GLU:ATOM,A,226,,GLU

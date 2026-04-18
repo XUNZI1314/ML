@@ -1,0 +1,59 @@
+{
+  "method_count": 2,
+  "methods": [
+    "ligand_contact",
+    "p2rank"
+  ],
+  "effective_min_method_count": 2,
+  "union_residue_count": 27,
+  "consensus_residue_count": 13,
+  "method_specific_residue_count": 14,
+  "all_methods_residue_count": 13,
+  "truth": {
+    "truth_available": true,
+    "truth_count": 7,
+    "consensus_truth_overlap_count": 7,
+    "consensus_truth_coverage": 1.0,
+    "consensus_truth_precision": 0.5384615384615384,
+    "missing_truth_count": 0,
+    "extra_consensus_count": 6,
+    "missing_truth_risk": 0.0,
+    "overwide_risk": 0.46153846153846156,
+    "missing_truth_residues": [],
+    "extra_consensus_residues": [
+      "A:124",
+      "A:126",
+      "A:129",
+      "A:145",
+      "A:221",
+      "A:222"
+    ],
+    "truth_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_active_site_truth.txt"
+  },
+  "method_summaries": [
+    {
+      "method": "ligand_contact",
+      "source_path": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\4OGW_ligand_contact_chainA_NMN\\predicted_pocket.txt",
+      "residue_count": 14,
+      "consensus_overlap_count": 13,
+      "consensus_overlap_fraction": 0.9285714285714286,
+      "method_specific_count": 1,
+      "count_to_median_ratio": 0.7,
+      "truth_overlap_count": 7,
+      "truth_coverage": 1.0,
+      "truth_precision": 0.5
+    },
+    {
+      "method": "p2rank",
+      "source_path": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\4OGW_p2rank_rank1_chainA\\predicted_pocket.txt",
+      "residue_count": 26,
+      "consensus_overlap_count": 13,
+      "consensus_overlap_fraction": 0.5,
+      "method_specific_count": 13,
+      "count_to_median_ratio": 1.3,
+      "truth_overlap_count": 7,
+      "truth_coverage": 1.0,
+      "truth_precision": 0.2692307692307692
+    }
+  ]
+}

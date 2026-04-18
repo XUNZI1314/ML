@@ -298,11 +298,19 @@ def process_one_pose(
         output["split_mode"] = str(getattr(split, "split_mode", "") or getattr(split, "method", ""))
 
         antigen_atoms = extract_atoms_from_entity(split.antigen, heavy_only=True)
-        antigen_residues = split.antigen
         nanobody_atoms = extract_atoms_from_entity(split.nanobody, heavy_only=True)
+        antigen_residues = [
+            residue
+            for chain_id in split.antigen.chain_ids
+            for residue in split.antigen.model[chain_id].get_residues()
+        ]
+        nanobody_residues = [
+            residue
+            for chain_id in split.nanobody.chain_ids
+            for residue in split.nanobody.model[chain_id].get_residues()
+        ]
         nanobody_residue_infos = extract_residues_from_entity(split.nanobody)
         antigen_residue_infos = extract_residues_from_entity(split.antigen)
-        nanobody_residues = nanobody_residue_infos
 
         output["num_antigen_residues"] = float(len(antigen_residue_infos))
         output["num_nanobody_residues"] = float(len(nanobody_residue_infos))
@@ -320,13 +328,13 @@ def process_one_pose(
         output["num_catalytic_residues_defined"] = float(len(catalytic_keys) if catalytic_keys is not None else 0)
 
         if pocket_keys:
-            pocket_match = match_residues_in_structure(split.antigen, pocket_keys)
+            pocket_match = match_residues_in_structure(antigen_residues, pocket_keys)
             output["num_pocket_residues_matched"] = float(len(pocket_match.matched_keys))
             if pocket_match.warnings:
                 warnings.extend([f"pocket: {w}" for w in pocket_match.warnings[:3]])
 
         if catalytic_keys:
-            catalytic_match = match_residues_in_structure(split.antigen, catalytic_keys)
+            catalytic_match = match_residues_in_structure(antigen_residues, catalytic_keys)
             output["num_catalytic_residues_matched"] = float(len(catalytic_match.matched_keys))
             if catalytic_match.warnings:
                 warnings.extend([f"catalytic: {w}" for w in catalytic_match.warnings[:3]])
@@ -427,6 +435,7 @@ def safe_process_one_pose(
 def collect_feature_qc_summary(
     feature_df: pd.DataFrame,
     near_constant_threshold: float = 0.99,
+    pocket_overwide_threshold: float = 0.55,
 ) -> dict[str, Any]:
     """Collect per-column QC summary for generated feature tables."""
     if feature_df.empty:
@@ -438,6 +447,7 @@ def collect_feature_qc_summary(
             "missing_ratio": {},
             "numeric_stats": {},
             "status_counts": {},
+            "pocket_shape_qc": {},
         }
 
     row_count = int(feature_df.shape[0])
@@ -479,6 +489,51 @@ def collect_feature_qc_summary(
         vc = feature_df["status"].astype(str).value_counts(dropna=False)
         status_counts = {str(k): int(v) for k, v in vc.items()}
 
+    pocket_shape_qc: dict[str, Any] = {}
+    if "pocket_shape_overwide_proxy" in feature_df.columns:
+        overwide = pd.to_numeric(feature_df["pocket_shape_overwide_proxy"], errors="coerce")
+        finite = overwide[np.isfinite(overwide.to_numpy(dtype=np.float64))]
+        threshold = float(np.clip(pocket_overwide_threshold, 0.0, 1.0))
+        if not finite.empty:
+            high_mask = overwide >= threshold
+            high_rows = feature_df.loc[high_mask.fillna(False)].copy()
+            id_cols = [
+                col
+                for col in [
+                    "nanobody_id",
+                    "conformer_id",
+                    "pose_id",
+                    "pdb_path",
+                    "pocket_shape_residue_count",
+                    "pocket_shape_overwide_proxy",
+                    "pocket_shape_tightness_proxy",
+                ]
+                if col in high_rows.columns
+            ]
+            top_rows = []
+            if id_cols:
+                high_rows = high_rows.sort_values(by="pocket_shape_overwide_proxy", ascending=False)
+                for _, high_row in high_rows.loc[:, id_cols].head(10).iterrows():
+                    record: dict[str, Any] = {}
+                    for col in id_cols:
+                        value = high_row.get(col)
+                        if isinstance(value, (np.integer, np.floating)):
+                            value = float(value)
+                        record[col] = value
+                    top_rows.append(record)
+
+            pocket_shape_qc = {
+                "overwide_threshold": threshold,
+                "finite_row_count": int(finite.shape[0]),
+                "high_overwide_row_count": int(high_mask.fillna(False).sum()),
+                "high_overwide_row_fraction": float(high_mask.fillna(False).sum() / max(int(finite.shape[0]), 1)),
+                "overwide_proxy_mean": float(np.nanmean(finite.to_numpy(dtype=np.float64))),
+                "overwide_proxy_p50": float(np.nanpercentile(finite.to_numpy(dtype=np.float64), 50)),
+                "overwide_proxy_p95": float(np.nanpercentile(finite.to_numpy(dtype=np.float64), 95)),
+                "overwide_proxy_max": float(np.nanmax(finite.to_numpy(dtype=np.float64))),
+                "top_overwide_rows": top_rows,
+            }
+
     qc = {
         "row_count": row_count,
         "column_count": int(feature_df.shape[1]),
@@ -487,6 +542,7 @@ def collect_feature_qc_summary(
         "missing_ratio": missing_ratio,
         "numeric_stats": numeric_stats,
         "status_counts": status_counts,
+        "pocket_shape_qc": pocket_shape_qc,
     }
     return qc
 

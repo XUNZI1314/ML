@@ -1,0 +1,4 @@
+pdb_id,chain_id,resname,resseq,icode,residue_label,category,atom_count,element_count,min_distance_to_truth,truth_contacts_within_threshold,protein_contacts_within_threshold,recommended_for_ligand_contact,recommendation_reason
+3ROP,A,50A,301,,A:50A:301,ligand_like,13,4,1.4065251508593757,4,11,True,ligand-like residue contacts known CD38 truth residues
+3ROP,A,NCA,302,,A:NCA:302,ligand_like,9,3,2.540951790176272,5,7,True,ligand-like residue contacts known CD38 truth residues
+4OGW,A,NMN,401,,A:NMN:401,ligand_like,22,4,2.7077728856017442,7,14,True,ligand-like residue contacts known CD38 truth residues

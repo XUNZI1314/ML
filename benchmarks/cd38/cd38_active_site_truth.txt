@@ -1,0 +1,15 @@
+# Human CD38 catalytic-pocket baseline residues for pocket accuracy benchmarking.
+# UniProt accession: P28907 (CD38_HUMAN)
+# This set is intentionally a compact benchmark truth, not an exhaustive residue map.
+# Literature support includes:
+# - PMID: 10781610
+# - PMID: 17380198
+# - PMC3732380
+# Typical benchmark structures such as 3F6Y / 3ROP use chain A for the ectodomain.
+A:125
+A:127
+A:146
+A:155
+A:189
+A:193
+A:226

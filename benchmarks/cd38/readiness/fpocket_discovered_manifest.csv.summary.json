@@ -1,0 +1,72 @@
+{
+  "fpocket_roots": [
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\fpocket_runs"
+  ],
+  "manifest_out": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv",
+  "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv.report.md",
+  "results_root": "D:\\minimal_ML_test\\benchmarks\\cd38\\results",
+  "truth_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_active_site_truth.txt",
+  "root_statuses": [
+    {
+      "input": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\fpocket_runs",
+      "resolved": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\fpocket_runs",
+      "exists": true,
+      "is_dir": true,
+      "pocket_file_count": 0
+    }
+  ],
+  "discovered_pocket_file_count": 0,
+  "manifest_row_count": 0,
+  "skipped_count": 0,
+  "per_pdb_id_counts": {},
+  "ready_for_manifest_run": false,
+  "recommended_next_action": "No fpocket pocket*_atm.pdb files were found; place real fpocket outputs under the scanned root and rerun discovery.",
+  "recommended_manifest_command": [
+    "python",
+    "prepare_cd38_fpocket_panel.py",
+    "--fpocket_root",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\fpocket_runs",
+    "--manifest_out",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv",
+    "--summary_json",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv.summary.json",
+    "--report_md",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv.report.md",
+    "--results_root",
+    "benchmarks/cd38/results",
+    "--truth_file",
+    "benchmarks/cd38/cd38_active_site_truth.txt",
+    "--chain_filter",
+    "A",
+    "--near_threshold",
+    "4.5"
+  ],
+  "recommended_run_command": [
+    "python",
+    "prepare_cd38_fpocket_panel.py",
+    "--fpocket_root",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\fpocket_runs",
+    "--manifest_out",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv",
+    "--summary_json",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv.summary.json",
+    "--report_md",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv.report.md",
+    "--results_root",
+    "benchmarks/cd38/results",
+    "--truth_file",
+    "benchmarks/cd38/cd38_active_site_truth.txt",
+    "--chain_filter",
+    "A",
+    "--near_threshold",
+    "4.5",
+    "--run"
+  ],
+  "chain_filter": "A",
+  "near_threshold": 4.5,
+  "include_hetatm": false,
+  "max_pockets_per_structure": null,
+  "run_requested": false,
+  "run": null,
+  "records": []
+}

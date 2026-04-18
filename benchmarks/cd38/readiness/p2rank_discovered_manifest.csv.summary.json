@@ -1,0 +1,168 @@
+{
+  "p2rank_roots": [
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\results"
+  ],
+  "manifest_out": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv",
+  "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.report.md",
+  "results_root": "D:\\minimal_ML_test\\benchmarks\\cd38\\results",
+  "truth_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_active_site_truth.txt",
+  "root_statuses": [
+    {
+      "input": "benchmarks/cd38/results",
+      "resolved": "D:\\minimal_ML_test\\benchmarks\\cd38\\results",
+      "exists": true,
+      "is_dir": true,
+      "prediction_file_count": 2
+    }
+  ],
+  "discovered_prediction_file_count": 2,
+  "manifest_row_count": 2,
+  "skipped_count": 0,
+  "per_pdb_id_counts": {
+    "3ROP": 1,
+    "4OGW": 1
+  },
+  "ready_for_manifest_run": true,
+  "recommended_next_action": "Manifest rows were created; run the generated manifest or rerun this script with --run.",
+  "recommended_manifest_command": [
+    "python",
+    "prepare_cd38_p2rank_panel.py",
+    "--p2rank_root",
+    "benchmarks/cd38/results",
+    "--manifest_out",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv",
+    "--summary_json",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.summary.json",
+    "--report_md",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.report.md",
+    "--results_root",
+    "benchmarks/cd38/results",
+    "--truth_file",
+    "benchmarks/cd38/cd38_active_site_truth.txt",
+    "--chain_filter",
+    "A",
+    "--near_threshold",
+    "4.5",
+    "--rank_by_pdb",
+    "3ROP=2,4OGW=1",
+    "--top_n",
+    "1"
+  ],
+  "recommended_run_command": [
+    "python",
+    "prepare_cd38_p2rank_panel.py",
+    "--p2rank_root",
+    "benchmarks/cd38/results",
+    "--manifest_out",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv",
+    "--summary_json",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.summary.json",
+    "--report_md",
+    "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.report.md",
+    "--results_root",
+    "benchmarks/cd38/results",
+    "--truth_file",
+    "benchmarks/cd38/cd38_active_site_truth.txt",
+    "--chain_filter",
+    "A",
+    "--near_threshold",
+    "4.5",
+    "--rank_by_pdb",
+    "3ROP=2,4OGW=1",
+    "--top_n",
+    "1",
+    "--run"
+  ],
+  "chain_filter": "A",
+  "near_threshold": 4.5,
+  "rank": null,
+  "rank_by_pdb": {
+    "3ROP": 2,
+    "4OGW": 1
+  },
+  "top_n": 1,
+  "min_probability": null,
+  "max_files_per_structure": null,
+  "run_requested": false,
+  "run": null,
+  "records": [
+    {
+      "status": "manifest_row",
+      "result_name": "3ROP_p2rank_rank2_chainA",
+      "rcsb_pdb_id": "3ROP",
+      "rank": 2,
+      "top_n": null,
+      "predictions_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_p2rank_rank2_chainA\\source_predictions.csv",
+      "inspection": {
+        "valid": true,
+        "reason": "",
+        "prediction_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_p2rank_rank2_chainA\\source_predictions.csv",
+        "columns": [
+          "name",
+          "rank",
+          "score",
+          "probability",
+          "sas_points",
+          "surf_atoms",
+          "center_x",
+          "center_y",
+          "center_z",
+          "residue_ids",
+          "surf_atom_ids"
+        ],
+        "pocket_count": 12,
+        "ranks": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
+        "names": [],
+        "has_probability": true
+      }
+    },
+    {
+      "status": "manifest_row",
+      "result_name": "4OGW_p2rank_rank1_chainA",
+      "rcsb_pdb_id": "4OGW",
+      "rank": 1,
+      "top_n": null,
+      "predictions_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\4OGW_p2rank_rank1_chainA\\source_predictions.csv",
+      "inspection": {
+        "valid": true,
+        "reason": "",
+        "prediction_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\4OGW_p2rank_rank1_chainA\\source_predictions.csv",
+        "columns": [
+          "name",
+          "rank",
+          "score",
+          "probability",
+          "sas_points",
+          "surf_atoms",
+          "center_x",
+          "center_y",
+          "center_z",
+          "residue_ids",
+          "surf_atom_ids"
+        ],
+        "pocket_count": 4,
+        "ranks": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "names": [],
+        "has_probability": true
+      }
+    }
+  ]
+}

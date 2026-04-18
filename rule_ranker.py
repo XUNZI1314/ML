@@ -18,6 +18,7 @@ import pandas as pd
 from ranking_common import (
     CONSISTENCY_WEIGHTS,
     GEOMETRY_AUX_WEIGHTS,
+    apply_pocket_overwide_penalty,
     build_blocking_explanation,
     compute_consistency_score,
     compute_weighted_scaled_mean,
@@ -222,6 +223,8 @@ def aggregate_rule_scores(
     pose_rule_df: pd.DataFrame,
     top_k: int = 3,
     conformer_geo_weight: float = 0.15,
+    pocket_overwide_penalty_weight: float = 0.0,
+    pocket_overwide_threshold: float = 0.55,
     mean_weight: float = 0.50,
     best_weight: float = 0.25,
     consistency_weight: float = 0.20,
@@ -301,6 +304,9 @@ def aggregate_rule_scores(
             "delta_pocket_occupancy_proxy",
             "rsite_accuracy",
             "min_distance_to_pocket",
+            "pocket_shape_residue_count",
+            "pocket_shape_overwide_proxy",
+            "pocket_shape_tightness_proxy",
             "mmgbsa",
             "interface_dg",
         ]:
@@ -315,10 +321,19 @@ def aggregate_rule_scores(
         # rule score stays dominant; geometry acts as auxiliary correction.
         w_geo = float(np.clip(conformer_geo_weight, 0.0, 0.40)) if np.isfinite(geo_aux_score) else 0.0
         base_rule = 0.70 * float(mean_topk_rule) + 0.30 * float(best_pose_rule)
-        conformer_rule_score = (1.0 - w_geo) * base_rule + w_geo * (float(geo_aux_score) if np.isfinite(geo_aux_score) else 0.0)
+        conformer_rule_score_raw = (1.0 - w_geo) * base_rule + w_geo * (float(geo_aux_score) if np.isfinite(geo_aux_score) else 0.0)
+        conformer_rule_score, overwide_penalty, overwide_weight = apply_pocket_overwide_penalty(
+            conformer_rule_score_raw,
+            row.get("mean_topk_pocket_shape_overwide_proxy"),
+            penalty_weight=float(pocket_overwide_penalty_weight),
+            threshold=float(pocket_overwide_threshold),
+        )
 
         row["geo_aux_score"] = geo_aux_score
         row["score_weight_geo_aux"] = w_geo
+        row["conformer_rule_score_before_pocket_overwide_penalty"] = float(np.clip(conformer_rule_score_raw, 0.0, 1.0))
+        row["pocket_overwide_penalty"] = overwide_penalty
+        row["score_weight_pocket_overwide_penalty"] = overwide_weight
         row["conformer_rule_score"] = float(np.clip(conformer_rule_score, 0.0, 1.0))
 
         # Aliases matching existing ML ranking naming.
@@ -405,6 +420,11 @@ def aggregate_rule_scores(
             "mean_topk_ligand_path_exit_block_fraction",
             "mean_topk_ligand_path_min_clearance",
             "mean_topk_delta_pocket_occupancy_proxy",
+            "mean_topk_pocket_shape_residue_count",
+            "mean_topk_pocket_shape_overwide_proxy",
+            "mean_topk_pocket_shape_tightness_proxy",
+            "pocket_overwide_penalty",
+            "score_weight_pocket_overwide_penalty",
             "mean_topk_rsite_accuracy",
         ]:
             row[col] = safe_mean_if_exists(g2, col)
@@ -497,6 +517,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.15,
         help="Geometry auxiliary weight in conformer aggregation",
     )
+    parser.add_argument(
+        "--pocket_overwide_penalty_weight",
+        type=float,
+        default=0.0,
+        help="Optional penalty weight for broad pocket definitions; default 0 keeps ranking unchanged",
+    )
+    parser.add_argument(
+        "--pocket_overwide_threshold",
+        type=float,
+        default=0.55,
+        help="Threshold for pocket_shape_overwide_proxy before optional penalty starts",
+    )
 
     parser.add_argument("--w_mean", type=float, default=0.50, help="Weight for mean conformer score")
     parser.add_argument("--w_best", type=float, default=0.25, help="Weight for best conformer score")
@@ -531,6 +563,8 @@ def main() -> None:
         pose_rule_df,
         top_k=int(args.top_k),
         conformer_geo_weight=float(args.conformer_geo_weight),
+        pocket_overwide_penalty_weight=float(args.pocket_overwide_penalty_weight),
+        pocket_overwide_threshold=float(args.pocket_overwide_threshold),
         mean_weight=float(args.w_mean),
         best_weight=float(args.w_best),
         consistency_weight=float(args.w_consistency),

@@ -2,6 +2,115 @@
 
 这份文档记录的是：目前已经能跑、也已经能支撑验证的部分，但仍然偏启发式、近似或缺少系统性校准的地方。后续迭代优先从这些点补强。
 
+## 当前推进看板
+
+| 模块 | 当前状态 | 下一步 |
+|---|---|---|
+| 本地软件打开和运行 | 已有源码启动、桌面版、便携版和 standalone 单文件版 | 继续做跨机器兼容性验证和启动失败提示收敛 |
+| 批量输入和运行体验 | 已支持 zip、目录扫描、自动生成输入表、队列、历史、导出、缺失文件自动定位、修复版 input_csv 下载、PASS/WARN/FAIL 质量门控和本批次结论摘要 | 后续补更强命名识别、按子目录聚合和人工确认编辑 |
+| Demo 数据集与一键演示 | 已有 deterministic synthetic demo 数据生成、synthetic validation override、一键推荐 pipeline、Windows bat 入口、本地软件侧边栏载入/立即运行按钮、demo HTML 欢迎页、运行说明文件、示例结果解读页、摘要页一键打开导览、真实数据 starter 模板包和可运行 `MINI_PDB_EXAMPLE` toy PDB 示例包 | 后续可补更多真实 PDB 小样本示例 |
+| Rule + ML 共识排序 | 已完成共识排名、分数解释卡片、本批次结论摘要、候选报告卡、候选横向对比解释、自定义候选对比、候选分组小结和低可信原因拆解 | 后续补真实验证结果对照和更完整 fpocket benchmark |
+| 候选报告卡 | 已完成 HTML 报告卡、zip 导出和报告卡内嵌候选对比 | 后续可补批量 PDF、候选报告卡批注和更细的可视化分组 |
+| AI 解释层 | 已完成基础版，默认离线，可选 OpenAI provider | 后续补候选级追问、本地 LLM provider 和答辩讲稿版摘要 |
+| ML 架构说明 | 已新增 `ML.md`，解释输入、特征、Rule、MLP、聚合、共识、QC 和源码阅读顺序 | 后续随模型结构变动同步更新 |
+| 下一轮实验建议 | 已完成 diversity-aware、预算 quota、实验计划单、人工覆盖、状态 ledger、本地编辑器、跨批次全局 ledger、真实验证回灌报告、验证证据审计、验证标签再训练入口、ledger 筛选图表、再训练前后对照报告、结果自动归档和长期趋势基础版 | 后续补更完整的真实 fpocket benchmark |
+| CD38 pocket benchmark | 已有 ligand-contact、P2Rank、方法共识、结构侧参数敏感性、fpocket/P2Rank 批量接入入口、外部工具输入包、transfer zip、返回结果导入、导入前返回包安全门控、环境/输出预检、finalize 一键收尾、外部 benchmark action plan、next-run runbook、readiness 一键刷新、结构扩展计划、ligand candidate 扫描、结果汇总、公开结构 starter 一键入口、本地软件诊断页刷新/打包/返回包检查入口、返回包导入自测和外部链路一键自检 | 后续按 next-run runbook 实际运行外部 P2Rank/fpocket 并导入真实输出 |
+| 几何 proxy | 已收紧 mouth/path，新增 pocket shape QC、几何 proxy 一致性审计，并补 CD38 proxy 校准报告 | 后续用更多真实 benchmark 校准阈值和权重 |
+| 参数敏感性分析 | ranking 权重/QC 惩罚基础版、CD38 结构侧基础版、fpocket pocket 表输出、fpocket/P2Rank 输入准备诊断、proxy 校准报告、外部工具输入包、transfer zip、返回结果导入、环境/输出预检、finalize 一键收尾、外部 benchmark action plan、结构扩展缺口表、readiness 总览和 ligand-contact 适用性检查均已完成 | 后续用更多结构和真实 fpocket/P2Rank 输出填充验证集 |
+| provenance 可复现记录 | 已完成运行卡片、artifact manifest、输入文件引用 manifest、跨批次 lineage、lineage 图形化和 SHA256 完整性封存基础版 | 后续如需更强审计，再补带私钥数字签名 |
+
+## 如果只回复“继续”，当前默认下一步
+
+优先做“真实 fpocket benchmark / 更多结构扩展验证”：
+
+1. [已完成基础增强] 支持 `experiment_plan_override.csv` 手工锁定或排除候选，例如强制 include/exclude/standby/defer。
+2. [已完成基础增强] 给计划单增加实验成本、样本状态、负责人、完成状态和备注字段。
+3. [已完成基础增强] 输出 `experiment_plan_state_ledger.csv`，作为可编辑、可继承的实验状态账本。
+4. [已完成基础增强] 本地软件“本轮实验计划单”支持表格编辑、下载、保存并设置为下一轮 override。
+5. [已完成基础增强] 新增 `build_experiment_state_ledger.py` 和本地软件历史页入口，可把多个历史运行的实验状态汇总成全局 ledger，并自动选择最近状态。
+6. [已完成基础增强] 候选对比页支持用户手工选择 2 到 5 个 nanobody 做自定义对比，可预览、下载并保存。
+7. [已完成基础增强] 新增 `build_experiment_validation_report.py`，可把全局 ledger 中明确的 `experiment_result` / `validation_label` 转成验证标签表、审计报告和可选的带实验标签特征表。
+8. [已完成基础增强] 本地软件支持可配置 `label_col`；验证回灌报告可在传入 `pose_features.csv` 后生成 `pose_features_with_experiment_labels.csv`，并一键设为下一轮 `feature_csv + experiment_label` 输入。
+9. [已完成基础增强] 本地软件全局 ledger 增加状态/结果/override/关键词筛选、可回灌标签计数和状态分布图。
+10. [已完成基础增强] 新增 `build_validation_retrain_comparison.py`，可对照回灌前/回灌后两次运行的标签数、Rule/ML 对照指标、训练 loss、top-k 重叠和候选 rank delta。
+11. [已完成基础增强] 本地软件“历史 -> 多运行对比”中新增验证回灌再训练前后对照报告入口，可生成并下载 CSV/JSON/Markdown。
+12. [已完成基础增强] 新增 `build_result_archive.py`，可扫描 `local_app_runs` 生成运行归档索引、关键产物 manifest、验证回灌长期趋势表、跨批次 lineage 表、summary JSON 和 Markdown 报告。
+13. [已完成基础增强] 本地软件“历史 -> 结果自动归档与长期趋势”支持一键刷新归档索引，并预览/下载运行索引、产物 manifest、长期趋势表和归档报告。
+14. [已完成基础增强] 候选对比解释新增 `candidate_group_comparison_summary.csv`，可按 diversity/family/status/risk 分组汇总共同优势、共同风险和最高排名候选，并接入本地软件预览/下载。
+15. [已完成基础增强] `prepare_cd38_fpocket_panel.py` 新增 `*.report.md` readiness report，可列出扫描目录、可运行 rows、跳过原因、推荐命令，并收紧 PDB ID 自动推断规则，避免把普通 `test` 文件夹误判成结构 ID。
+16. [已完成基础增强] 新增 `build_cd38_benchmark_expansion_plan.py` 和 `benchmarks/cd38/cd38_structure_targets.csv`，可按结构/方法输出 CD38 benchmark 缺口表、missing actions、summary JSON 和 Markdown 计划。
+17. [已完成基础增强] 新增 `inspect_cd38_ligand_candidates.py`，可扫描目标结构 HETATM 并判断是否适合 ligand-contact baseline；当前确认 `3ROP=50A/NCA`、`4OGW=NMN`，`3F6Y` 没有活性口袋 ligand candidate，因此从 ligand-contact 目标中移除。
+18. [已完成基础增强] 新增 `prepare_cd38_p2rank_panel.py`，可批量发现 `P2Rank *_predictions.csv`，生成 manifest、summary JSON 和 readiness report，并支持 `--rank_by_pdb` 处理 active-site pocket rank 不是 1 的情况。
+19. [已完成基础增强] 新增 `refresh_cd38_benchmark_readiness.py`，可一键刷新 ligand scan、扩展计划、P2Rank readiness 和 fpocket readiness，并生成总览 summary / commands / Markdown 报告；如果没有外部输出，会优先提示先生成外部工具输入包并运行环境/输出预检。
+20. [已完成基础增强] 新增 `prepare_cd38_external_tool_inputs.py`，可为 `3ROP/4OGW/3F6Y` 生成外部 P2Rank/fpocket 输入 PDB、PowerShell/Bash 命令模板、输出目录约定、后续 readiness 刷新脚本、manifest、summary JSON 和 Markdown 操作说明；现在还会生成 expected return manifest 和 return checklist，明确外部机器跑完后应该带回哪些 `PDB × method` 输出；transfer 包内 Markdown 已改用包内相对路径，避免跨机器运行时被本机绝对路径误导。
+21. [已完成基础增强] 新增 `check_cd38_external_tool_environment.py` 和 `external_tool_inputs/check_external_tool_environment.ps1`，可检查 `prank` / `fpocket` 是否在 PATH 中、PDB 输入是否存在、预期 P2Rank CSV 和 fpocket `pocket*_atm.pdb` 是否到位，并输出 preflight CSV/JSON/Markdown；路径解析已改成 `package_portable_first`，输入包移动后会优先看当前 package 内路径，避免旧绝对路径误导。
+22. [已完成基础增强] 新增 `finalize_cd38_external_benchmark.py` 和 `external_tool_inputs/finalize_external_benchmark.ps1`，可一条命令串联返回包导入、preflight、readiness、可选 `--run_discovered` 导入和可选 `--run_sensitivity` 参数敏感性刷新；支持 `--import_source <returned_zip_or_dir>`，默认只检查不导入；当 readiness 发现 0 条可运行外部 rows 时会跳过 benchmark 汇总和参数敏感性刷新，避免把旧结果误当成新导入；finalize 报告会链接 import repair plan 和 action plan，直接提示缺失输出、优先级和对应模板。
+23. [已完成基础增强] 新增 `package_cd38_external_tool_inputs.py`，可把外部工具输入包压成 transfer zip，默认只包含 PDB、PowerShell/Bash 模板和说明文件，排除 preflight/finalize 报告及旧输出，便于传到 Linux/WSL 或另一台机器运行。
+24. [已完成基础增强] 新增 `import_cd38_external_tool_outputs.py`，可从返回目录或 zip 中安全导入 `p2rank_outputs/` 和 `fpocket_runs/*/*_out/`，默认不覆盖已有文件；现在支持返回包外面多包一层目录，并会生成 scan manifest，列出扫描文件、候选文件、忽略原因、导入 manifest、summary 和 Markdown 报告；同时输出 `source_diagnosis`，可直接识别“误把原始输入包当返回输出包导入”的情况；新增 coverage manifest，按 `PDB × method` 检查返回包覆盖和缺口；新增 repair plan CSV，把缺失项转成应运行模板、应返回路径和 dry-run 验证命令。
+25. [已完成基础增强] 新增 `build_cd38_external_benchmark_action_plan.py`，把 expansion missing actions、preflight、readiness、expected returns 和 import repair plan 合并成 `benchmarks/cd38/action_plan/cd38_external_benchmark_action_plan.md/csv/json`；当前明确 4 个 benchmark completion blocker：priority `1` 的 `3ROP/4OGW fpocket`，priority `2` 的 `3F6Y P2Rank/fpocket`，另有 2 个 `3ROP/4OGW P2Rank` package reproducibility 行。
+26. [已完成基础增强] 新增 `build_geometry_proxy_audit.py`，并接入推荐 pipeline、smoke test 和本地软件 QC 面板；用于检查 mouth/path/pocket/contact proxy 是否自洽，不改变分数和排序。
+27. [已完成基础增强] 新增 `build_validation_evidence_audit.py`，并接入推荐 pipeline、smoke test 和本地软件排名结果页；用于检查 top 候选真实验证证据覆盖、正负标签平衡和待补行动项，不改变分数和排序。
+28. [已完成基础增强] 新增 `demo_data_utils.py`、`run_demo_pipeline.py`、`run_demo_pipeline.bat`、`demo_report_utils.py` 和 `real_data_starter_utils.py`，可一键生成 synthetic demo 特征表、synthetic validation override，并跑完整推荐 pipeline，输出 `demo_outputs/DEMO_OVERVIEW.html`、`DEMO_README.md`、`DEMO_INTERPRETATION.md` 与 `REAL_DATA_STARTER/`；本地软件侧边栏也已支持“生成并载入 demo 输入”和“生成并立即运行 demo”，并会在 demo 运行输出目录写入同样的 demo 导览、说明、解读文件和真实数据迁移模板；摘要页“Demo 快速导览”可一键打开 HTML 导览和 starter 文件夹。
+29. [已完成基础增强] `REAL_DATA_STARTER/` 现在会包含 `MINI_PDB_EXAMPLE/`，内置 12 个可解析 toy 复合物 PDB、`input_pose_table.csv`、`A:37-40` pocket 定义、catalytic 文件、ligand template 和说明文档；已验证 `build_feature_table.py` 12/12 行成功，轻量 `run_recommended_pipeline.py` 可完整生成 ranking/report/provenance。注意该示例只用于真实输入链路检查，不是生物学 benchmark。
+30. [已完成基础增强] 新增 `run_cd38_public_starter.py`，可一键刷新公开 CD38 结构 starter：串联 panel 汇总、ligand candidate scan、参数敏感性、proxy calibration、外部工具输入包/preflight、readiness、action plan 和 next-run runbook；已验证 9/9 子步骤成功，当前 panel 为 4 行（`ligand_contact=2`、`p2rank=2`），action plan 仍显示 4 个 benchmark gap。
+31. [已完成基础增强] 本地软件“诊断”页新增 CD38 public starter 面板，可一键刷新公开结构 starter，显示 panel rows、missing/pending、action plan 状态和 proxy 校准策略，并提供 starter 报告、action plan CSV、expected returns CSV、返回检查清单、next-run runbook、preflight/readiness 报告的一键打开或下载入口。
+32. [已完成基础增强] 本地软件“诊断”页新增 CD38 外部工具 transfer/return 面板，可一键生成 `cd38_external_tool_inputs_transfer.zip`，下载或打开 transfer 目录；返回 zip/目录带回后可先 dry-run 检查，再导入并 finalize；已验证原始 transfer zip 会被识别为 `input_package_without_external_outputs`，不会误当成真实返回结果。
+33. [已完成基础增强] 新增 `selftest_cd38_return_import_workflow.py` 和本地软件“返回包导入流程自测”入口，可生成 synthetic returned package fixture，并 dry-run 验证导入器能识别 6 个候选输出、expected coverage 达到 6/6；该自测只验证路径和 coverage，不作为真实 CD38 benchmark 证据。
+34. [已完成基础增强] 新增 `build_cd38_return_package_gate.py` 和本地软件“返回包安全门控”，可把最新返回包 dry-run/import 结果判断为 `PASS_READY_FOR_IMPORT`、`WARN_PARTIAL_RETURN`、`FAIL_INPUT_PACKAGE`、`FAIL_SYNTHETIC_FIXTURE` 等状态；已验证原始 transfer zip 会被判为 `FAIL_INPUT_PACKAGE`，synthetic fixture 会被判为 `FAIL_SYNTHETIC_FIXTURE`。
+35. [已完成基础增强] 本地软件“导入返回包并 finalize”新增导入前 gate 保护：正式导入前会先在隔离目录 dry-run 返回包并生成 gate，只有 `PASS_*` 状态才继续调用 finalize，避免原始输入包、自测 fixture 或不完整返回包污染本地 `external_tool_inputs`。
+36. [已完成基础增强] `finalize_cd38_external_benchmark.py --import_source` 现在默认启用同样的导入前 gate；CLI 会先 dry-run 返回包并生成 gate，非 `PASS_*` 时跳过真实导入；保留 `--skip_import_gate` 作为人工复核后的专家绕过开关；新增 `--strict_import_gate`，适合 CI/自动化在 gate 非 PASS 时返回非零。已验证原始 transfer zip 在 CLI 下被拦截为 `FAIL_INPUT_PACKAGE`，strict 模式会返回非零。
+37. [已完成基础增强] 新增 `selftest_cd38_external_workflow.py` 和本地软件“CD38 外部工具链路一键自检”，可一次验证 transfer zip 生成、原始 transfer zip strict gate 拦截、synthetic returned fixture 的 importer/gate 行为和 public starter 刷新；已验证整体状态 `pass`。
+38. [已完成基础增强] 新增 `build_cd38_external_tool_runbook.py`，可把 action plan 转成外部机器可直接执行的 next-run runbook、CSV、PowerShell 和 Bash 脚本；`package_cd38_external_tool_inputs.py` 会在打包前自动刷新并把这些文件放入 transfer zip；本地软件 transfer 面板也提供 next-run 说明和脚本下载。当前默认选择 4 个 benchmark completion 动作：`3ROP/4OGW/3F6Y fpocket` 和 `3F6Y P2Rank`。
+39. [已完成文档增强] 新增 `ML.md`，把当前 ML 本体解释为“结构几何特征 -> Rule baseline -> tabular MLP -> pose/conformer/nanobody 聚合 -> Rule+ML 共识 -> QC/解释/实验建议”的架构，并列出源码阅读顺序和边界。
+40. 后续继续做更完整的真实 fpocket benchmark，并优先按 next-run runbook 实际运行外部模板补 `3ROP/4OGW/3F6Y` 的真实 fpocket 输出；`3F6Y` 还需要补真实 P2Rank 输出。
+
+AI 解释层基础版已经完成，暂不作为默认下一步继续扩大；后续如果继续做 AI，优先做候选级追问和本地 LLM provider，而不是让 AI 参与模型打分。
+
+需要真实外部数据时再继续“真实 fpocket / 更多结构扩展验证”：
+
+1. 如果还没有真实 P2Rank/fpocket 输出，先运行 `python prepare_cd38_external_tool_inputs.py`，生成 PDB 输入包和 PowerShell 模板。
+2. 先运行 `python check_cd38_external_tool_environment.py` 或 `external_tool_inputs/check_external_tool_environment.ps1`，明确当前缺的是外部工具还是输出文件；如果输入包被移动过，优先看 preflight CSV 中的 `pdb_input_source`、`p2rank_source`、`fpocket_source` 是否为 `package_portable`。
+3. 先运行 `python build_cd38_external_tool_runbook.py`，把 action plan 转成 `external_tool_inputs/cd38_external_tool_next_run.md` 和 `run_cd38_external_next_benchmark.*`；默认只包含当前真正缺的 benchmark blocker。
+4. 在已安装外部工具的环境优先运行 next-run 脚本；如果明确需要所有模板，再运行或改写 `external_tool_inputs/run_p2rank_templates.*` 与 `external_tool_inputs/run_fpocket_templates.*`；跑完后先对照 `cd38_external_tool_return_checklist.md` 或 `cd38_external_tool_expected_returns.csv`。
+5. 如果要转移到另一台机器运行，先运行 `python package_cd38_external_tool_inputs.py` 生成 transfer zip；zip 会自动包含 next-run runbook 和脚本。
+6. 如果拿回来的是整个目录或 zip，可直接运行 `python finalize_cd38_external_benchmark.py --import_source <returned_zip_or_dir>`；该命令现在会先做导入前 gate，只有 `PASS_*` 才正式导入输出并生成收尾报告。需要先看候选文件时再用 `python import_cd38_external_tool_outputs.py --source <returned_zip_or_dir> --dry_run`，若候选数为 0 则先看 `source_diagnosis`，再查看 `cd38_external_tool_output_import_scan.csv` 的忽略原因；若要看缺哪些结构/方法，看 `cd38_external_tool_output_import_coverage.csv`；若要直接按清单补缺，看 `cd38_external_tool_output_import_repair_plan.csv`。
+7. 外部工具跑完后再次运行 preflight，确认输出到位。
+8. 运行 `python finalize_cd38_external_benchmark.py` 或 `external_tool_inputs/finalize_external_benchmark.ps1`，统一生成接入收尾报告。
+9. 如果仍缺输出，先看 `benchmarks/cd38/action_plan/cd38_external_benchmark_action_plan.md`，按 priority 补齐真实外部工具结果。
+10. readiness report 无明显问题后，运行 `python finalize_cd38_external_benchmark.py --run_discovered` 批量加入同口径 panel；如果返回包已确认无误，也可一条命令运行 `python finalize_cd38_external_benchmark.py --import_source <returned_zip_or_dir> --run_discovered`。
+11. 如需同时刷新参数敏感性，运行 `python finalize_cd38_external_benchmark.py --run_discovered --run_sensitivity`，或在返回包导入时合并为 `python finalize_cd38_external_benchmark.py --import_source <returned_zip_or_dir> --run_discovered --run_sensitivity`。
+   如果报告显示 `Runnable external benchmark rows: 0`，说明没有真实外部 rows 被导入，需先检查返回包是否包含 `p2rank_outputs/` 或 `fpocket_runs/*/*_out/`。
+12. 在 CD38 manifest 中加入更多可用结构；对无 ligand candidate 的结构，只做 P2Rank/fpocket 这类 pocket finder 测试。
+13. 根据更多结构结果再决定是否默认启用 pocket overwide penalty。
+
+## 默认自动推进规则（2026-04-15）
+
+后续如果用户只回复“继续”，默认按下面的执行约定推进，不需要每一轮重复指定：
+
+1. 默认按 [not_perfect.md](not_perfect.md) 中“未完成”或“仍建议继续做”的事项顺序继续推进。
+2. 优先做最小侵入的增量修改，不重写主链路，不随意换技术栈，不推倒现有界面和脚本。
+3. 每一轮默认直接落代码、做必要验证、同步更新本文件；如 README 或运行说明已受影响，也一并更新。
+4. 每一轮完成后，如果没有明显 blocker，下一次收到“继续”时直接进入下一个未完成项，不再重复做大段方案讨论。
+5. 默认优先级顺序如下：
+   - 先做会影响当前可用性和运行稳定性的项
+   - 再做本地软件体验和导出一致性的项
+   - 再做 ML 评估完整性、几何 proxy 收紧、解释能力增强
+   - 最后再继续收紧更重的分发形态，例如“单文件自解压版的跨机器兼容性”
+6. 只有在以下情况才暂停并显式询问用户：
+   - 需要用户做方向选择，且不同选项会明显影响后续实现
+   - 需要外部账号、人工登录、联网认证或仓库权限
+   - 需要执行高风险或破坏性操作
+   - 发现现有需求之间存在直接冲突
+   - 发现代码现状与文档要求严重不一致，继续改会放大返工风险
+7. 如果只是普通的小 blocker，优先自行解决；能通过补依赖、补文档、补兼容逻辑或补验证解决的，不单独停下来询问。
+8. 每一轮结束时，默认只汇报四件事：
+   - 做了什么
+   - 验证结果
+   - 当前还没完成的关键点
+   - 下一步最自然要做什么
+
+这条规则的目的是：后续尽量把“继续”收敛成真正的连续推进，而不是每轮都重新协商执行方式。
+
 ## 已完成的后续完善（2026-04-08）
 
 已落地如下增强：
@@ -54,6 +163,17 @@
   - 自动调用 [ml_desktop_launcher.py](ml_desktop_launcher.py)
   - 缺少 `pythonw` 时自动回退到 `python`
 - 这一步主要解决“源码目录虽然能跑，但启动方式仍然像开发脚本”的问题。
+
+## 已完成的运行时依赖预检基础增强版（2026-04-15）
+
+- 在 [runtime_dependency_utils.py](runtime_dependency_utils.py) 中新增了轻量依赖预检工具。
+- 当前已经支持：
+  - 在 [local_ml_app.py](local_ml_app.py) 的“运行前检查”里直接提示缺失的 `torch` / `biopython`
+  - 在点击“立即运行”或“加入队列”前自动拦截缺失依赖，而不是等到后台任务跑失败
+  - 在 [run_recommended_pipeline.py](run_recommended_pipeline.py) 中提前做运行时依赖检查，并输出明确的缺包错误
+  - 在 [ml_desktop_launcher.py](ml_desktop_launcher.py) 的 `--selftest` 和实际启动前检查 `streamlit`
+  - 在 [requirements.txt](requirements.txt) 中按 Python 版本区分 `torch` 版本，兼容当前 Python 3.14 环境
+- 这一步主要解决“软件能打开，但真正进入 ML 训练或桌面启动时才晚报依赖错误”的问题。
 
 ## 已完成的本地交互壳增强版（2026-04-14）
 
@@ -153,6 +273,106 @@
   - 自动生成 `portable_dist/ML_Portable_release.manifest.json`
   - 在 manifest 中记录 zip 的 SHA256、大小和条目清单
 - 这一步的定位是“可直接分发的 zip 发布版”，但运行形态仍然是“解压后按便携目录版运行”。
+
+## 已完成的单文件自解压基础版（2026-04-16）
+
+- 新增 [build_standalone_onefile.py](build_standalone_onefile.py) 和 [build_standalone_onefile.bat](build_standalone_onefile.bat)。
+- 当前已经支持：
+  - 构建 `portable_dist/standalone_onefile/ML_Local_App_Standalone.exe`
+  - 将 `app/` 运行源码、`app/.venv` 和桌面启动器一起内嵌进单个 exe
+  - 通过 PyInstaller onefile 机制在运行时自动解压内嵌 `app/`
+  - 让启动器优先识别内嵌 `app/` 根目录，而不是只能依赖外部仓库或便携目录
+  - 生成 `ML_Local_App_Standalone.manifest.json`，记录单文件产物的版本号、SHA256 和内嵌条目
+- 这一步的定位是“单文件自解压基础版”，已经不再要求外部再保留一个 `app/` 文件夹。
+- 当前仍然不应过度宣称为“跨机器完全验证完毕”的最终形态，后续更适合继续推进的是：
+  - 单文件自解压版的跨机器兼容性验证与收紧
+  - 更接近真实物理含义的 mouth / path blocking proxy
+  - 更完整的 ML 外部验证与 benchmark
+
+## 已完成的单文件自解压校验增强版（2026-04-16）
+
+- 在 [ml_desktop_launcher.py](ml_desktop_launcher.py) 中补了结构化自检输出。
+- 当前已经支持：
+  - 通过 `--selftest-json <path>` 将路径解析结果、依赖状态、`repo_root_source`、`python_executable` 等信息落成 JSON
+  - 对源码版、桌面 launcher exe、便携版 exe 和单文件版 exe 统一使用同一套自检 payload
+- 新增 [validate_standalone_onefile.py](validate_standalone_onefile.py)。
+- 当前已经支持：
+  - 把 `ML_Local_App_Standalone.exe` 复制到系统临时目录
+  - 在脱离宿主仓库目录的情况下执行 `--selftest-json`
+  - 自动校验 `repo_root_source = meipass_app`
+  - 自动校验 `python_executable` 来自内嵌 `app/.venv`
+  - 自动校验当前没有回退到宿主仓库目录
+  - 将验证结果写入 `portable_dist/standalone_onefile_validation/standalone_validation_latest.json`
+- 这一步主要解决“单文件版虽然已经能构建，但还缺少一条可重复执行的自动化验证链，难以确认它是否真的在脱离源码目录后仍使用内嵌 app 运行”的问题。
+- 这一轮做完后，更适合继续推进的点主要是：
+  - 真实外部 Windows 机器上的兼容性验证
+  - 更接近真实物理含义的 mouth / path blocking proxy
+  - 更完整的 ML 外部验证与 benchmark
+
+## 已完成的分组交叉验证 benchmark 基础增强版（2026-04-16）
+
+- 新增 [benchmark_pose_pipeline.py](benchmark_pose_pipeline.py)。
+- 当前已经支持：
+  - 基于 `nanobody_id` 的分组交叉验证，而不再只看单次 train/val 切分
+  - 每折独立训练 [train_pose_model.py](train_pose_model.py) 并在 held-out fold 上输出 `pose_cv_predictions.csv`
+  - 直接复用 [rank_nanobodies.py](rank_nanobodies.py) 和 [rule_ranker.py](rule_ranker.py)，生成 ML / rule 两条 nanobody benchmark 对照
+  - 自动输出 `fold_metrics.csv`、`nanobody_benchmark_table.csv`、`benchmark_summary.json`、`benchmark_report.md`
+  - 自动输出 pose 和 nanobody 两层的 reliability curve / ECE / Brier
+  - 自动输出 `geometry_proxy_benchmark.csv`，用于直接看各个几何 proxy 在 held-out fold 上的单项表现
+- 这一步主要解决“当前已有训练和排序主链，但还缺一条低侵入、可重复、能直接看 ML 与 rule benchmark 表现的系统评估链”的问题。
+- 这一轮做完后，更适合继续推进的点主要是：
+  - 使用真实实验数据做独立 test / 外部 benchmark，而不只是交叉验证
+  - 把 benchmark 结果继续反哺到几何 proxy 收紧和权重回归
+  - 更接近真实物理含义的 mouth / path blocking proxy
+
+## 已完成的几何 proxy 收紧基础增强版（2026-04-16）
+
+- 在 [geometry_features.py](geometry_features.py) 中继续收紧了两条最关键的静态 proxy 合成逻辑。
+- 当前已经支持：
+  - 让 `mouth_occlusion_score` 更强调 `mouth_axis_block_fraction` 与 `mouth_aperture_block_fraction` 的一致阻断，而不是让单一子信号过强地主导总分
+  - 让 `ligand_path_block_score` 在保留多候选出口阻断共识的同时，显式考虑“是否仍存在一条较开放的逃逸路径”
+  - 保持现有输出字段和下游脚本接口不变，不增加主链路迁移成本
+- 这一步主要解决“已有 mouth/path proxy 虽然能区分很多情形，但对单侧阻断或单一路径仍开放的情况还可能偏乐观”的问题。
+- 这一轮做完后，更适合继续推进的点主要是：
+  - 用真实 benchmark 检查这些 proxy 的权重是否还需要继续回归
+  - 继续把 mouth/path proxy 往更接近真实物理意义的方向收紧
+
+## 已完成的 CD38 口袋准确性 test 脚手架（2026-04-16）
+
+- 新增 [benchmark_cd38_pocket_accuracy.py](benchmark_cd38_pocket_accuracy.py)。
+- 新增 [run_cd38_p2rank_benchmark.py](run_cd38_p2rank_benchmark.py)，把 `P2Rank predictions.csv -> residue 提取 -> CD38 benchmark` 串成单条命令。
+- 新增 [run_cd38_ligand_contact_benchmark.py](run_cd38_ligand_contact_benchmark.py)，把 `ligand-bound 结构 -> ligand-contact residue -> CD38 benchmark` 串成单条命令。
+- 新增 [extract_fpocket_pocket_residues.py](extract_fpocket_pocket_residues.py) 和 [run_cd38_fpocket_benchmark.py](run_cd38_fpocket_benchmark.py)，把 `fpocket pocket*_atm.pdb -> residue 提取 -> CD38 benchmark` 串成单条命令。
+- 新增 [run_cd38_benchmark_manifest.py](run_cd38_benchmark_manifest.py) 和 [benchmarks/cd38/cd38_benchmark_manifest.csv](benchmarks/cd38/cd38_benchmark_manifest.csv)，支持按 manifest 批量复跑 ligand-contact / P2Rank / fpocket / residue_file benchmark。
+- 新增 [summarize_cd38_benchmarks.py](summarize_cd38_benchmarks.py)，把 `benchmarks/cd38/results/` 下的结构化结果目录聚合成总表。
+- 新增 [benchmarks/cd38/cd38_active_site_truth.txt](benchmarks/cd38/cd38_active_site_truth.txt) 和 [benchmarks/cd38/README.md](benchmarks/cd38/README.md)。
+- 当前已经支持用单个 CD38 结构对 pocket residue 结果做 exact overlap / near-hit coverage / precision / Jaccard / F1 检测。
+- 当前已经支持直接下载 RCSB PDB（如 `3F6Y`）做本地 benchmark。
+- 当前已经支持输出逐残基命中表、missed truth 表、extra predicted 表和 near-hit 距离表。
+- 已经在 `3ROP` 和 `4OGW` 上跑通 ligand-contact baseline，对 CD38 truth pocket 做了第一轮真实结构 sanity check。
+- 已经在 `3ROP` 和 `4OGW` 上跑通真实 `P2Rank` 输出，当前仓库结果目录分别是 `benchmarks/cd38/results/3ROP_p2rank_rank2_chainA/` 与 `benchmarks/cd38/results/4OGW_p2rank_rank1_chainA/`。
+- 这两组真实 `P2Rank` baseline 的 `exact_truth_coverage` 都是 `1.0`，说明 CD38 baseline truth 已经能用于真实 pocket tool 的首轮筛查。
+- 当前仓库内已经把这 4 组结果都固化成了结构化结果目录，并生成了 `benchmarks/cd38/results/cd38_benchmark_panel.csv` 与 `cd38_benchmark_panel.md`。
+- 当前新增的 `4OGW + P2Rank` 也暴露了一个更具体的问题：coverage 虽稳，但 pocket 边界会因为结构状态变化而明显变宽，precision 会下降到 `0.2692`。
+- 新增 truth-based `overwide_pocket_score`，专门量化“找到了口袋但边界过宽”的风险；当前 `4OGW + P2Rank` 的该分数为 `0.6175`，明显高于其他 3 组。
+- 在 [geometry_features.py](geometry_features.py) 中新增无 truth 依赖的 `pocket_shape_*` 特征，主链运行时会输出 `pocket_shape_overwide_proxy` / `pocket_shape_tightness_proxy`。
+- 最小验证显示 `3ROP + P2Rank` 的 `pocket_shape_overwide_proxy` 约为 `0.219`，`4OGW + P2Rank` 约为 `0.594`，能捕捉当前 panel 暴露的过宽问题。
+- 在 [build_feature_table.py](build_feature_table.py) 的 `feature_qc.json` 中新增 `pocket_shape_qc`，会统计高 overwide 行数、占比、p95/max 和前 10 个最值得复核的 pose。
+- 在 [local_ml_app.py](local_ml_app.py) 的 QC/Warning 面板和展示摘要 HTML 中新增 Pocket Shape QC 展示。
+- 在 [rank_nanobodies.py](rank_nanobodies.py) 与 [rule_ranker.py](rule_ranker.py) 中保留 top-k 的 `pocket_shape_*` 聚合字段，并在 `explanation` 中前置提示“pocket 定义偏宽，建议复核口袋边界”。
+- 在 [ranking_common.py](ranking_common.py)、[rank_nanobodies.py](rank_nanobodies.py)、[rule_ranker.py](rule_ranker.py)、[calibrate_rule_ranker.py](calibrate_rule_ranker.py)、[run_recommended_pipeline.py](run_recommended_pipeline.py) 和 [local_ml_app.py](local_ml_app.py) 中新增默认关闭的 `pocket_overwide_penalty_weight` / `pocket_overwide_threshold`。
+- 当前默认 `pocket_overwide_penalty_weight=0.0`，所以不改变已有排名；如果后续 benchmark 证明确实需要，可在本地软件或 CLI 中显式启用小权重。
+- 已做函数级和 CLI 级最小验证：默认权重下分数保持不变；设置 `pocket_overwide_penalty_weight=0.2` 后，高 overwide 的 NB1 被扣分，低 overwide 的 NB2 不受影响；`rule_ranker.py` 与 `rank_nanobodies.py` 都能落盘 `pocket_overwide_penalty` 字段。
+- 已做 fpocket 解析器最小验证：构造 `pocket1_atm.pdb` 后能提取 `A:125/A:127`，并能通过 [run_cd38_fpocket_benchmark.py](run_cd38_fpocket_benchmark.py) 生成完整 CD38 benchmark 输出。
+- 新增 [prepare_cd38_fpocket_panel.py](prepare_cd38_fpocket_panel.py)，可扫描一批真实 `fpocket` 输出目录，自动发现 `pocket*_atm.pdb`，生成 `fpocket_discovered_manifest.csv`、summary JSON 和 readiness report，并可通过 `--run` 直接批量加入 CD38 benchmark panel。
+- 已做 fpocket panel 准备层最小验证：临时构造两个 `pocket*_atm.pdb` 文件后，脚本能生成两条 fpocket manifest row，并能以 `--dry_run --run` 串到 [run_cd38_benchmark_manifest.py](run_cd38_benchmark_manifest.py)。
+- 已做 manifest runner 验证：`python run_cd38_benchmark_manifest.py` 能识别现有 4 组结果、跳过已存在输出、重新生成 `cd38_benchmark_panel.csv/md` 和 `manifest_run_summary.json`。
+- [analyze_cd38_pocket_parameter_sensitivity.py](analyze_cd38_pocket_parameter_sensitivity.py) 已新增 `fpocket_pocket_sensitivity.csv` 输出；当前没有真实 fpocket baseline 行时该表为空但表头稳定，后续接入真实 fpocket manifest 后会自动填充。
+- 已做 fpocket 敏感性非空最小验证：临时构造 fpocket manifest 和 `predicted_pocket.txt` 后，能输出 fpocket pocket choice 的 coverage、precision、F1、missing truth 和 utility。
+- 这一步主要解决“单个 CD38 不适合直接跑完整抗体主链，但很适合先拿来验证 pocket finding 是否覆盖已知关键位点”的问题。
+- 当前仍未做完的主要不是“有没有批量扩展入口”，而是在 manifest 中加入更多 CD38 结构并实际跑出结果，避免只看 `3ROP/4OGW`。
+- 当前仍未做完的主要不是“有没有 fpocket 接入口或批量接入口”，而是拿真实 `fpocket` 输出文件跑一组同口径 baseline。
+- 当前仍未做完的主要不是“有没有轻量 ranker 惩罚项”，而是用更多 CD38/非 CD38 benchmark 决定推荐权重是否仍应保持默认 `0.0`。
 
 ## 已完成的版本化发布元数据版（2026-04-14）
 
@@ -452,7 +672,7 @@
 
 1. [已完成基础增强] 运行对比页列裁剪与当前视图导出。
 2. [已完成基础增强] 运行对比页按数值阈值做细筛选。
-3. [未完成] 将当前对比可见视图同步进 HTML / PDF 导出。
+3. [已完成基础增强] 将当前对比可见视图同步进 HTML / PDF 导出。
 
 这些点仍然属于“对比已经能看，但还可以更聚焦、更便于分享”的增强，不改 compare 的底层统计逻辑，只增强 compare 结果浏览和导出层。
 
@@ -468,7 +688,7 @@
 - 这一步主要解决“运行对比页已经有很多表，但当前只能原样看全表、导出全表，难以快速聚焦重点列”的问题。
 - 这一轮做完后，更适合继续推进的点主要是：
   - 运行对比页按数值阈值做细筛选
-  - 将当前对比可见视图同步进 HTML / PDF 导出
+  - 单个 exe 完全独立运行
 
 ## 已完成的运行对比页数值阈值细筛选基础增强版（2026-04-15）
 
@@ -481,7 +701,22 @@
   - 与现有列裁剪、排序和 CSV 导出联动
 - 这一步主要解决“运行对比页虽然已经能看很多表，但想快速只保留改善更大、失败更少或批次更稳定的记录时，仍然要手工导出再筛”的问题。
 - 这一轮做完后，更适合继续推进的点主要是：
-  - 将当前对比可见视图同步进 HTML / PDF 导出
+  - 单个 exe 完全独立运行
+  - 更接近真实物理含义的 mouth / path blocking proxy
+
+## 已完成的运行对比页导出视图同步基础增强版（2026-04-16）
+
+- 在 [local_ml_app.py](local_ml_app.py) 的“运行对比”页补了导出层的当前视图同步。
+- 当前已经支持：
+  - 生成运行对比 HTML 时，使用当前页面四张表的显示列、排序结果和数值阈值筛选结果
+  - 生成运行对比 PDF 时，使用当前页面四张表的显示列、排序结果和数值阈值筛选结果
+  - 在导出目录中同时写出每张表的 `*_view.csv` 与全筛选结果 CSV
+  - 在导出的 HTML / PDF 中增加“当前页面视图同步说明”，明确当前展示行数、列数和筛选后总行数
+- 这一步主要解决“页面里已经裁好了重点视图，但导出 HTML / PDF 仍然退回原始全表，导致展示内容和页面所见不一致”的问题。
+- 这一轮做完后，更适合继续推进的点主要是：
+  - 单个 exe 完全独立运行
+  - 更接近真实物理含义的 mouth / path blocking proxy
+  - 更完整的 ML 外部验证与 benchmark
 
 ## 完整度核查（2026-04-14）
 
@@ -502,6 +737,192 @@
   - 功能已经能用、能演示、能继续复用
   - 但仍保留进一步补强空间
   - 不等于这个方向已经彻底结束
+
+## 已识别的功能说明与创新增强路线（2026-04-16）
+
+这部分不是要推翻现有代码，而是基于当前已经能跑的本地软件、批量 pipeline、benchmark 和导出能力，继续补“更容易理解、更容易批量用、更有展示创新点”的功能。
+
+### A. 功能说明仍可完善的地方
+
+1. [已完成基础增强] 批量输入说明还可以更直观。
+   - 当前已经在 [local_ml_app.py](local_ml_app.py) 的运行前检查中补了“输入数据检查报告”基础版。
+   - 已支持列出必需列、可选列、行数、nanobody 数、conformer 数、pose 数、重复 ID 行、label 覆盖情况。
+   - 已支持检查 `pdb_path` / `pocket_file` / `catalytic_file` / `ligand_file` 的路径覆盖、缺失路径和上传 CSV 相对路径未确认风险。
+   - [已完成基础增强] 新增 [input_path_repair.py](input_path_repair.py)，可递归扫描 CSV 所在目录树或指定 `--search_root`，为缺失的 `pdb_path` / `pocket_file` / `catalytic_file` / `ligand_file` 输出修复建议、summary、Markdown 报告和可选修复版 CSV。
+   - [已完成基础增强] 本地软件运行前检查已接入缺失路径自动定位，可下载路径修复建议 CSV，也可保存并使用自动修复版 `input_csv`。
+   - 已支持预览本次会执行哪些 pipeline 阶段，以及 label-aware 步骤会执行还是跳过。
+   - 已支持下载 `input_preflight_report.json`，方便保留本批次输入检查记录。
+   - 后续仍可继续加强为更强命名识别、按子目录聚合 nanobody_id、行级 pocket/ligand 匹配和人工确认编辑。
+
+2. [已完成基础增强] 结果分数说明还可以更产品化。
+   - 当前有 `final_score` / `final_rule_score` / `explanation`，但用户仍可能不知道高分代表什么。
+   - [已完成基础增强] 新增 [build_score_explanation_cards.py](build_score_explanation_cards.py)，基于 `consensus_ranking.csv` 输出 `score_explanation_cards.csv/md/html/json`。
+   - 分数解释卡片会说明高分原因、主要正向因素、主要风险因素、是否 pocket 过宽、是否缺少 label、是否存在 QC warning，以及推荐动作。
+   - 推荐 pipeline、smoke test 和本地软件“排名结果”页已接入该产物；本地页面可预览 HTML、筛选 CSV 和下载结果。
+   - 后续可继续把 ML 排名和 Rule 排名的区别做成更显眼的页面内说明。
+
+3. [已完成基础增强] QC / Warning 还可以变成明确的运行判定。
+   - 当前已经有 `feature_qc.json`、failed/warning 行和 pocket shape QC。
+   - [已完成基础增强] 新增 [build_quality_gate.py](build_quality_gate.py)，读取 `pose_features.csv` 和可选 `feature_qc.json`，输出统一 `PASS / WARN / FAIL`。
+   - 当前规则：没有可用行或存在 failed 行为 `FAIL`；warning 行、全空列、pocket overwide 风险或 label 不足为 `WARN`；基础检查都通过为 `PASS`。
+   - 推荐 pipeline、smoke test、本地软件 QC/Warning 页和结果归档已接入 `quality_gate_summary.json`、`quality_gate_checks.csv` 和 `quality_gate_report.md`。
+   - 后续可继续把 PASS/WARN/FAIL 接到运行历史和多运行对比表中，便于批次级筛选。
+
+4. [已完成基础增强] 批量运行后的汇总说明还可以更清楚。
+   - 当前已有运行历史、多运行对比和趋势聚合。
+   - [已完成基础增强] 新增 [build_batch_decision_summary.py](build_batch_decision_summary.py)，可读取推荐流水线 summary、Quality Gate、共识排名、分数解释卡片、实验建议和实验计划，输出 `batch_decision_summary.json/md` 与 `batch_decision_summary_cards.csv`。
+   - 当前已汇总本批次最高综合排名候选、当前证据最稳定候选、最需要复核候选、下一轮实验优先候选、Quality Gate WARN/FAIL、warning/error Top-N、最高风险输入行、真实验证证据状态和建议先打开的文件。
+   - 推荐 pipeline、smoke test、本地软件摘要页和结果归档均已接入该产物；这比单纯给一堆 CSV 更适合比赛展示和非开发用户理解。
+
+5. README / run.md / MODEL_QUICKSTART.md 之间还可以进一步分工。
+   - README 适合放完整说明。
+   - run.md 适合只放“怎么打开软件”。
+   - MODEL_QUICKSTART.md 适合只放“如何准备输入、如何运行、如何看输出”。
+   - 后续建议避免三份文档重复长段内容，而是互相引用。
+
+### B. 可以作为创新点继续做的功能
+
+1. 批量数据导入向导。
+   - [已完成基础增强] 当前已经支持 zip 导入、本地目录扫描、CSV 批量处理，并在缺少现成 `input_pose_table.csv` / `pose_features.csv` 时自动生成 `auto_input_pose_table.csv`。
+   - 当前自动生成逻辑会扫描 PDB，保守推断 `nanobody_id` / `conformer_id` / `pose_id`，并尽量复用识别到的 `pocket` / `catalytic` / `ligand` 默认文件。
+   - 自动生成表会在本地软件中展示预览，并支持下载；运行前仍建议点击“检查当前输入”确认 ID 和路径是否符合预期。
+   - 这属于最实用的创新，因为它直接降低使用门槛。
+
+2. 批量任务 manifest。
+   - 当前 CD38 benchmark 已经有 `cd38_benchmark_manifest.csv` 和批量 runner。
+   - 主 ML pipeline 也可以补类似 manifest：一张表描述多批输入、参数模板、输出目录和是否启用 label-aware steps。
+   - 这样可以一次性排队跑多批数据，而不是只在 UI 队列里手工点。
+
+3. Rule + ML 共识排名。
+   - [已完成基础增强] 当前已经有 Rule 排名、ML 排名、Rule vs ML 对照，以及新增的 `build_consensus_ranking.py`。
+   - 推荐 pipeline 会自动输出 `consensus_outputs/consensus_ranking.csv`、`consensus_summary.json` 和 `consensus_report.md`。
+   - 共识表综合 ML 分数、Rule 分数、两者一致性、来源覆盖度、QC 风险和 pocket overwide 风险，并给出 `confidence_level`、`decision_tier` 与中文解释。
+   - [已完成基础增强] 新增分数解释卡片，把共识分、可信度、正向因素、风险因素、label 状态和 recommended action 翻译成适合非开发用户阅读的 CSV/HTML/Markdown。
+   - 本地软件“排名结果”页已新增共识排名预览、筛选和下载；HTML/PDF 展示摘要也会包含共识排名预览。
+   - 创新点是“不是盲信黑盒 ML，而是保留规则可解释性和几何 QC 的共识决策”。
+
+4. 每个 nanobody 的“候选报告卡”。
+   - [已完成基础增强] 新增 `build_candidate_report_cards.py`，可基于 `consensus_ranking.csv` 为每个候选生成单页 HTML 报告卡。
+   - 当前报告卡会汇总最终排名、ML 分数、Rule 分数、可信度、风险标记、主要解释、top pose 行、feature/QC warning、pocket 覆盖和几何风险。
+   - 推荐 pipeline 会自动输出 `candidate_report_cards/index.html`、`candidate_report_cards/cards/*.html`、`candidate_report_cards.csv`、`candidate_report_cards_summary.json` 和 `candidate_report_cards.zip`。
+   - 本地软件“排名结果”页已新增候选报告卡索引打开和 zip 下载入口。
+   - 这适合导出 HTML；如需 PDF，可用浏览器打开单个报告卡后打印为 PDF。
+
+5. 候选横向对比解释。
+   - [已完成基础增强] 新增 `build_candidate_comparisons.py`，可基于 `consensus_ranking.csv` 生成候选 trade-off 表和 pairwise 对比解释。
+   - [已完成基础增强] 支持 `--selected_nanobody_ids` 做指定候选自定义对比；本地软件可手工选择 2 到 5 个候选并保存结果。
+   - 当前输出 `candidate_tradeoff_table.csv`、`candidate_pairwise_comparisons.csv`、`candidate_comparison_summary.json` 和 `candidate_comparison_report.md`。
+   - 推荐 pipeline 和 smoke test 会自动输出 `candidate_comparisons/`；本地软件“排名结果”页已支持预览、筛选、下载和查看 Markdown 报告。
+   - 这一步回答“为什么 A 排在 B 前面”，同时列出较低排名候选的反向优势和 close decision，属于同类工具通常缺少的决策解释层。
+
+6. 不确定性 / 低可信样本提示。
+   - [已完成基础增强] `consensus_ranking.csv` 已输出 `confidence_score` 与 `confidence_level = high / medium / low`。
+   - [已完成基础增强] `consensus_ranking.csv` 已输出 `review_reason_flags` 与 `low_confidence_reasons`，把 Rule/ML 排名差、分数差、pocket overwide、conformer instability、close-score competition、失败行和 warning 行拆成独立原因。
+   - 当前可信度基于 Rule/ML 排名一致性、分数一致性、来源覆盖度和 QC 风险；候选报告卡和下一轮实验建议已经接入这些细分原因。
+   - 后续还可以把训练 label 覆盖、候选序列/结构多样性进一步显式加入低可信原因拆解。
+
+7. 主动学习式下一轮实验建议。
+   - [已完成基础增强] 新增 `suggest_next_experiments.py`，可从 `consensus_ranking.csv` 生成下一轮实验建议表。
+   - 当前会根据高分但低可信、Rule/ML 分歧大、QC / pocket overwide 风险高和来源缺失等信号，输出 `experiment_priority_score`、`suggestion_tier`、`suggestion_reason` 和 `recommended_next_action`。
+   - [已完成基础增强] 新增 diversity-aware ordering，输出 `diversity_adjusted_priority_score`、`diversity_group`、`diversity_adjustment` 和 `diversity_note`，避免下一轮建议过度集中在同一类候选。
+   - [已完成基础增强] 新增 `experiment_plan.csv/md`，支持总预算、validate/review 分层 budget、standby 数量和 diversity group quota。
+   - [已完成基础增强] 新增 `experiment_plan_state_ledger.csv`，并在本地软件里提供计划单编辑器，可保存为下一轮 `experiment_plan_override_csv`。
+   - [已完成基础增强] 新增跨批次全局 ledger，扫描 `local_app_runs` 汇总历史实验状态，输出 `experiment_state_ledger_global.csv`。
+   - [已完成基础增强] 新增真实验证回灌报告，只有明确的 `validation_label` 或 `experiment_result=positive/negative` 才生成训练标签，避免把 `completed` 或 `blocked` 误当成生物学标签。
+   - [已完成基础增强] 新增真实验证证据审计，推荐 pipeline 会输出 `validation_evidence_audit/validation_evidence_report.md`、top-k 表和行动清单，检查当前高排名候选是否已经有足够实验支撑。
+   - 推荐 pipeline 会自动输出 `experiment_suggestions/next_experiment_suggestions.csv`、`next_experiment_suggestions_summary.json` 和 `next_experiment_suggestions_report.md`。
+   - 本地软件“排名结果”页已新增下一轮实验建议预览、筛选和下载。
+   - 这可以作为科研产品创新点：软件不只是排序，还能建议下一步实验投入，并提示“当前排序还缺哪些真实验证证据”。
+
+8. pocket 方法共识分析。
+   - [已完成基础增强] 新增 `compare_pocket_method_consensus.py`，可比较 manual、ligand-contact、P2Rank、fpocket 等多来源 pocket residue list。
+   - 当前输出 `consensus_pocket_residues.txt`、`union_pocket_residues.txt`、`residue_method_membership.csv`、`method_specific_residues.csv`、`method_overlap_matrix.csv`、`pocket_method_consensus_summary.json` 和 `pocket_method_consensus_report.md`。
+   - 有 truth 时会输出 truth coverage、precision、missing truth risk 和 overwide risk；无 truth 时会输出基于方法一致性和 union/consensus 扩张程度的 proxy 风险。
+   - 已在 CD38 的 `3ROP ligand-contact vs P2Rank` 和 `4OGW ligand-contact vs P2Rank` 上跑通。
+   - `3ROP` 当前共识 pocket 覆盖 truth 约 `0.8571`，precision 约 `0.5455`，仍缺 `A:155` 这个 exact truth 位点。
+   - `4OGW` 当前共识 pocket 覆盖 truth 为 `1.0000`，precision 约 `0.5385`，说明核心位点覆盖稳定，但仍有约一半共识 residue 属于 truth 之外的邻近口袋区域。
+   - 这已经把“口袋预测不确定性”从隐藏风险变成可解释结果；后续增强重点应转向更多方法、更多结构和参数敏感性。
+
+9. 参数敏感性分析。
+   - [已完成基础增强] 新增 `analyze_ranking_parameter_sensitivity.py`，可基于已有 `consensus_ranking.csv` 做 post-processing，不重跑结构特征、不重新训练模型。
+   - 当前会扫描 Rule/ML 权重、rank-agreement 权重和 QC risk penalty 权重，输出 `scenario_rankings.csv`、`scenario_summary.csv`、`candidate_rank_sensitivity.csv`、`sensitive_candidates.csv`、`parameter_sensitivity_summary.json` 和 `parameter_sensitivity_report.md`。
+   - 推荐 pipeline 和 smoke test 会自动生成 `parameter_sensitivity/`；本地软件“排名结果”页已支持预览和下载。
+   - [已完成基础增强] 新增 `analyze_cd38_pocket_parameter_sensitivity.py`，可基于当前 CD38 本地 benchmark 文件扫描 contact cutoff、P2Rank rank、fpocket pocket choice、method consensus 阈值和 overwide penalty。
+   - 当前结构侧输出 `contact_cutoff_sensitivity.csv`、`p2rank_rank_sensitivity.csv`、`fpocket_pocket_sensitivity.csv`、`method_consensus_threshold_sensitivity.csv`、`overwide_penalty_sensitivity.csv`、`cd38_pocket_parameter_sensitivity_summary.json` 和 `cd38_pocket_parameter_sensitivity_report.md`。
+   - [已完成基础增强] 新增 `prepare_cd38_fpocket_panel.py`，用于把真实 `fpocket` 输出目录批量转换成 CD38 benchmark manifest，并可直接串到 manifest runner。
+   - [已完成基础增强] `prepare_cd38_fpocket_panel.py` 现在会同步生成 readiness report，检查扫描目录、可运行 rows、跳过原因和推荐命令；PDB ID 自动推断已收紧为首位数字的真实 PDB ID 格式，避免把普通文件夹名误判成结构。
+   - [已完成基础增强] 新增 `prepare_cd38_p2rank_panel.py`，可批量发现真实 `P2Rank` 的 `*_predictions.csv`，生成 manifest、summary JSON 和 readiness report，并支持 `--rank_by_pdb`。
+   - [已完成基础增强] 新增 `build_cd38_benchmark_expansion_plan.py` 和 `benchmarks/cd38/cd38_structure_targets.csv`，把“更多 CD38 结构 / 真实 fpocket baseline”拆成结构-方法级状态矩阵，并输出 `complete`、`needs_fpocket_output`、`needs_ligand_metadata`、`needs_p2rank_output` 等缺口状态。
+   - [已完成基础增强] 新增 `inspect_cd38_ligand_candidates.py`，用 HETATM + CD38 truth residue 距离判断结构是否适合 ligand-contact baseline；当前 `3F6Y` 被识别为无活性口袋 ligand candidate，因此扩展计划只保留 P2Rank/fpocket。
+   - [已完成基础增强] 新增 `refresh_cd38_benchmark_readiness.py`，一条命令聚合 ligand scan、扩展计划、P2Rank readiness 和 fpocket readiness，默认不运行 benchmark，适合每次接入外部输出前先刷新总览。
+   - [已完成基础增强] 新增 `prepare_cd38_external_tool_inputs.py`，把真实外部 P2Rank/fpocket benchmark 的下一步拆成输入 PDB、PowerShell/Bash 命令模板、输出目录约定、expected return checklist 和 readiness 刷新脚本，减少手工整理目录时出错。
+   - [已完成基础增强] 新增 `check_cd38_external_tool_environment.py`，把“工具没装”“输入缺失”“P2Rank CSV 缺失”“fpocket pocket 文件缺失”拆成可审计 preflight 报告；preflight 现在优先解析当前 package 内 portable 路径，移动输入包后不会被旧绝对路径误导；当前本机 `prank` 和 `fpocket` 都未在 PATH 中发现。
+   - [已完成基础增强] 新增 `finalize_cd38_external_benchmark.py`，把外部输出复制回来后的收尾动作压成一条命令：可选返回包导入、preflight、readiness、可选导入 benchmark、可选刷新参数敏感性；如果没有可运行外部 rows，会明确跳过旧 panel 汇总，并在有缺口时链接 repair plan。
+   - [已完成基础增强] 新增 `package_cd38_external_tool_inputs.py`，把外部工具输入包打成可转移 zip，默认排除中间报告和旧输出，降低跨机器运行时复制错文件的风险。
+   - [已完成基础增强] 新增 `import_cd38_external_tool_outputs.py`，把返回目录/zip 中的真实输出安全导入本地 package，降低手工复制输出目录时错位或覆盖的风险；导入脚本现在能处理多包一层目录的返回 zip，并输出 scan manifest、coverage manifest、repair plan 和 `source_diagnosis` 解释为什么候选数为 0、缺哪些结构/方法以及下一步应补什么。
+   - [已完成基础增强] 新增 `build_cd38_proxy_calibration_report.py`，可基于当前 CD38 panel 重算运行时 `pocket_shape_overwide_proxy`，对照 truth-based `overwide_pocket_score`、coverage 和 precision 输出阈值候选、方法汇总、penalty simulation 和默认策略建议；当前结论是 proxy 能识别 `4OGW + P2Rank` 偏宽问题，但证据等级仍为 `low`，默认 `pocket_overwide_penalty_weight` 继续保持 `0.0`。
+   - [已完成基础增强] 新增 `build_cd38_external_benchmark_action_plan.py`，把外部 benchmark 的缺口从多份 report 合并成一张可执行清单；当前 action plan 显示 6 个外部输出动作，其中 4 个是 benchmark completion blocker，优先补 `3ROP/4OGW fpocket` 和 `3F6Y P2Rank/fpocket`。
+   - [已完成基础增强] 新增 `build_geometry_proxy_audit.py`，可从 `pose_features.csv` 审计 mouth/path/pocket/contact 等 proxy 是否互相矛盾，输出 pose 级 flagged rows、candidate 级汇总、特征覆盖表和 Markdown 报告；推荐 pipeline、smoke test 和本地软件 QC 面板已自动接入，且不改变任何分数。
+   - 当前基础版可以回答“候选排名是否对权重/QC 惩罚敏感”“CD38 pocket 结论是否对结构侧参数敏感”“当前 proxy 证据是否足以改变默认惩罚权重”“外部 benchmark 下一步具体缺哪些输出”和“本批几何 proxy 是否自洽”；后续重点应从真实 `fpocket` 输出和更多结构中补样本。
+
+10. 数据与结果 provenance。
+   - 为每次运行记录输入文件 hash、脚本版本、参数模板、依赖环境、随机种子、输出文件清单。
+   - [已完成基础增强] 推荐 pipeline 现在会生成 `provenance/run_input_file_manifest.csv`，按行记录 `input_csv` / `feature_csv` 中引用的 `pdb_path`、`pocket_file`、`catalytic_file`、`ligand_file`，包括是否存在、大小、SHA256、缺失状态和默认文件来源。
+   - [已完成基础增强] 结果归档现在会生成 `result_archive_lineage.csv`，用 provenance hash 追踪共享输入文件 manifest、共享 feature CSV 和共享参数 hash 的历史运行，并标出上一个同源运行。
+   - [已完成基础增强] 推荐 pipeline 现在会生成 `provenance/run_provenance_integrity.json`，并提供 `verify_run_provenance.py` 对 provenance 卡片、artifact manifest 和 input file manifest 重新计算 SHA256，识别文件误改或复制不完整。
+   - [已完成基础增强] 结果归档现在会生成 `result_archive_lineage_graph.json/html/md`，把共享输入 manifest、共享 feature CSV 和共享参数 hash 的复跑关系做成图形化时间线，本地软件归档页可预览和下载。
+   - 当前已有 provenance 运行卡片、artifact manifest、输入文件引用 manifest、跨批次 lineage、lineage 图形化、SHA256 完整性封存、metadata 和版本号；后续如需更强审计，再转向带私钥数字签名。
+   - 这对科研场景很重要，也适合展示工程规范。
+
+11. Demo 数据集与一键演示模式。
+   - [已完成基础增强] 新增 `demo_data_utils.py`，可生成可复现 synthetic `pose_features.csv`。
+   - [已完成基础增强] 新增 synthetic `experiment_plan_override.csv`，让 demo 同时覆盖验证证据审计、批次结论和报告导出。
+   - [已完成基础增强] 新增 `run_demo_pipeline.py` 和 `run_demo_pipeline.bat`，一条命令或双击即可生成 demo 数据并跑完整推荐 pipeline。
+   - [已完成基础增强] 本地软件侧边栏新增“生成并载入 demo 输入”，会自动切到 `feature_csv` 模式并填好 demo 特征表和 experiment override。
+   - [已完成基础增强] 本地软件侧边栏新增“生成并立即运行 demo”，可自动生成 demo 输入并启动后台运行。
+   - [已完成基础增强] 命令行 demo 输出 `demo_outputs/DEMO_README.md`；本地软件 demo 运行也会在当前输出目录写入 `DEMO_README.md`，按阅读顺序链接批次结论、候选报告卡、验证证据审计和关键 CSV。
+   - [已完成基础增强] 新增 `DEMO_INTERPRETATION.md`，解释 demo 中的 Quality Gate、候选排序、top-k 验证覆盖和 synthetic 验证边界。
+   - [已完成基础增强] 新增 `DEMO_OVERVIEW.html`，用浏览器展示 demo 摘要、候选亮点、top consensus ranking 和关键结果链接。
+   - [已完成基础增强] 本地软件“摘要”页新增“Demo 快速导览”，可一键打开 `DEMO_OVERVIEW.html` 并下载 demo README / 解读文件。
+   - [已完成基础增强] 新增 `REAL_DATA_STARTER/`，包含 `input_pose_table_template.csv`、`pose_features_template.csv`、`experiment_plan_override_template.csv`、pocket/catalytic 模板和真实数据检查清单。
+   - 后续可补可运行的真实小型 PDB 示例包；demo 标签仍必须标注为 synthetic，不可冒充真实湿实验结果。
+
+### C. 建议下一阶段优先级
+
+1. 先做“输入数据检查报告”和“上传后预览将如何批量处理”。
+   - 状态：已完成基础增强。
+   - 后续剩余：缺失文件自动定位和修复建议已有基础版；可以继续补更强命名识别、批量人工确认编辑和按目录规则自动分组。
+
+2. 再做“批量数据导入向导 -> 自动生成 input_pose_table.csv”。
+   - 状态：已完成基础增强。
+   - 后续剩余：可以继续补更强的命名规则识别、按子目录聚合 nanobody_id、行级 pocket/ligand 匹配和人工确认编辑。
+
+3. 再做“候选报告卡”“候选对比解释”和“共识排名”。
+   - 状态：共识排名、候选报告卡、候选横向对比解释、自定义候选对比和候选分组小结均已完成基础增强。
+   - 后续剩余：可以继续把报告卡升级为批量 PDF、增加报告卡批注和真实验证结果对照。
+
+4. 再做“可信度分级”和“主动学习建议”。
+   - 状态：可信度分级、主动学习建议、diversity-aware 队列、实验计划单、状态 ledger、本地编辑器、跨批次全局 ledger、真实验证回灌报告、验证标签再训练入口、ledger 筛选图表、再训练前后对照报告、结果自动归档和长期趋势汇总均已完成基础增强。
+   - 后续剩余：可以继续做更完整的真实 fpocket benchmark。
+
+5. 最后做“参数敏感性分析”和“pocket 方法共识分析”。
+   - 原因：更偏验证和科研增强，需要更多真实数据或外部 tool 输出支撑。
+   - 改动范围：适合用 manifest runner 和 benchmark 工具继续扩展。
+   - 状态：pocket 方法共识分析、ranking 参数敏感性分析、CD38 结构侧参数敏感性分析、fpocket/P2Rank 批量接入入口、外部工具输入包、环境/输出预检、finalize 一键收尾、外部 benchmark action plan、readiness 一键刷新、CD38 扩展计划和 ligand-contact 适用性检查均已完成基础增强；后续继续补更多结构和真实 `fpocket` / `P2Rank` 输出。
+
+### D. 当前不建议优先做的方向
+
+1. 不建议现在重写整个前端。
+   - 当前 Streamlit 本地软件已经能支撑上传、运行、历史、导出和对比，继续局部增强更划算。
+
+2. 不建议现在默认启用 pocket overwide 惩罚。
+   - 当前样本量还不足，默认保持 `0.0` 更稳。
+
+3. 不建议现在把模型包装成“已严格验证的科研结论生成器”。
+   - 当前更准确的定位仍是“可解释排序 + 几何 proxy + benchmark 辅助决策工具”。
+
+4. 不建议优先做 3D viewer。
+   - 你当前真正需要的是更方便上传、批量处理、理解结果和导出报告；3D viewer 可以等结构化 bundle 更稳定后再接。
 
 ## 已推进的展示层准备（2026-04-14）
 
@@ -677,17 +1098,17 @@
 21. [已完成基础增强] 补多运行趋势与 run-to-run 差异解释。
 22. [已完成基础增强] 补更细的差异归因。
 23. [已完成基础增强] 补跨批次趋势聚合。
-24. [未完成] 如果后续需要，再继续推进成“单个 exe 也能完全独立”的完整便携版。
+24. [已完成基础版] 已补单文件自解压的 standalone onefile 版；后续如需继续推进，重点是跨机器兼容性验证与收紧。
 
 ## 1. 几何特征仍以 proxy 为主（已部分收紧）
 
 文件: [geometry_features.py](geometry_features.py)
 
-当前已实现的几何特征已经可以区分很多“堵口袋”和“普通表面结合”的情形，但其中一部分仍是静态代理量，不是严格物理模拟：
+当前已实现的几何特征已经可以区分很多“堵口袋”和“普通表面结合”的情形，而且 `mouth_occlusion_score` 与 `ligand_path_block_score` 已经做过一轮收紧；但其中一部分仍是静态代理量，不是严格物理模拟：
 
-- `mouth_occlusion_score` 依赖口袋口部候选点和局部接触的近似定义。
+- `mouth_occlusion_score` 已经更强调口部轴向和孔径覆盖的一致性，但口部候选点本身仍来自静态几何推断。
 - `delta_pocket_occupancy_proxy` 和 `pocket_block_volume_proxy` 是占据/阻断的代理，不是显式体积模拟。
-- `ligand_path_block_score` 已升级为融合连续阻断比例/瓶颈分数的静态近似，但仍不是完整动力学路径评估。
+- `ligand_path_block_score` 已升级为融合连续阻断比例/瓶颈分数并显式惩罚开放逃逸路径的静态近似，但仍不是完整动力学路径评估。
 - `substrate_overlap_score` 主要衡量几何冲突近似，仍可能受 ligand template 质量影响。
 
 这意味着：几何特征已经可用，但仍需要用真实数据或更强的结构验证继续校准。
@@ -726,15 +1147,21 @@
 
 如果后续要把模型结果做成正式评分，最好引入一批人工标注或实验验证样本做校准。
 
-## 5. 训练与评估还缺少更完整的外部验证
+## 5. 训练与评估仍缺真实外部验证闭环（已补 grouped CV benchmark 基础版）
 
-文件: [train_pose_model.py](train_pose_model.py)、[rank_nanobodies.py](rank_nanobodies.py)
+文件: [train_pose_model.py](train_pose_model.py)、[rank_nanobodies.py](rank_nanobodies.py)、[benchmark_pose_pipeline.py](benchmark_pose_pipeline.py)
 
-当前训练和排序流程已经有基本闭环，但还不算完整评估体系：
+当前训练和排序流程已经不再只是“单次 train/val 切分”，因为已经补了独立的 grouped CV benchmark：
 
-- 目前主要依赖单次 train/val 切分，没有系统交叉验证。
-- 没有独立 test set、外部 benchmark、calibration curve 或 reliability analysis。
-- 模型选择主要基于 `val_loss`，还没有和实际结构验证结果做闭环对齐。
+- 已有基于 `nanobody_id` 的系统交叉验证。
+- 已有 pose / nanobody 两层的 reliability curve、ECE 和 Brier。
+- 已可并排比较 ML ranking 与 rule ranking 的 AUC / Spearman / score delta。
+
+但它仍然不是最终完整评估体系：
+
+- 还没有真实外部独立 test set。
+- 还没有跨实验批次、跨时间的长期 benchmark。
+- 模型选择仍主要基于 `val_loss` + 交叉验证指标，还没有和真实结构验证结果做闭环对齐。
 - `rank_nanobodies.py` 的最终分数已经加入一致性项，但仍需要真实成功案例/失败案例做权重回归。
 
 ## 6. 解释字段仍是规则拼接，不是因果解释
@@ -778,6 +1205,8 @@
 已完成：
 
 - 依赖版本已固定到 `requirements.txt`。
+- 当前已经补了运行时依赖预检，可在桌面启动器、本地软件和推荐流程入口提前识别缺失的 `streamlit` / `torch` / `biopython`。
+- `requirements.txt` 中的 `torch` 已按 Python 版本分流，降低 Python 3.14 环境下“锁定版本不可安装”的风险。
 - 新增 `.github/workflows/smoke-test.yml`，在 push/PR 自动执行端到端 smoke test。
 
 仍建议继续做：
@@ -789,10 +1218,17 @@
 
 1. [已完成] 用真实/标签可用数据时执行规则权重校准入口（脚本已提供）。
 2. [已完成] 规则版与 ML 版对照评估报表。
-3. [进行中] 把几何 proxy 再往物理意义上收紧，尤其口袋口部和路径阻断。
-4. [已完成] 增加固定回归数据能力（synthetic 可复现数据生成 + smoke test 固定种子）。
+3. [进行中] 把几何 proxy 再往物理意义上收紧，尤其口袋口部和路径阻断；当前已补 mouth/path 收紧、pocket shape QC、CD38 proxy 校准和不改分数的 geometry proxy audit。
+4. [已完成] 增加固定回归数据能力（synthetic 可复现数据生成 + smoke test 固定种子 + 一键 demo pipeline）。
 5. [已完成] 在 Python 3.13 环境补一轮端到端烟测流程。
 6. [已完成基础版] 导出 residue annotation / interface residue 的结构化载荷，给后续 viewer 或展示壳复用。
+7. [已完成基础版] 增加 AI/离线解释层，只解释已有结果，不改变 Rule/ML 分数和排序。
+8. [已完成基础增强] 增加 provenance 运行卡片，记录输入、输出、代码、依赖、Git 状态、参数 hash、输入文件引用 manifest 和 SHA256 完整性封存。
+9. [已完成基础增强] 候选报告卡内嵌 candidate pairwise comparison context，减少报告切换成本。
+10. [已完成基础增强] 下一轮实验建议加入 diversity-aware ordering，不改变原始 priority score，只调整建议队列展示顺序。
+11. [已完成基础增强] 下一轮实验建议输出 `experiment_plan.csv/md`，支持预算、分层 quota、standby 和 defer。
+12. [已完成基础增强] 新增一键 demo 数据和演示流程，覆盖 synthetic 特征、synthetic 验证 override、推荐 pipeline、批次结论和候选报告卡。
+13. [已完成基础增强] 新增真实输入链路 mini PDB 示例包，覆盖 PDB 解析、显式链拆分、`A:37-40` residue range、ligand template、feature table 和完整 pipeline 轻量运行。
 
 ## 10. 如果后续扩展为“可视化展示型软件”，当前仍缺的版块
 
@@ -834,6 +1270,8 @@
 - `A:45`
 - `A:45,A:46,A:47`
 - `A:45 46 47`
+- `A:37-40`，等价于 `A:37,A:38,A:39,A:40`
+- `B:37-40` / `C:37-40` 等其他链名范围
 - `B:102A`
 
 后续仍可继续增加：
@@ -922,4 +1360,22 @@
 19. [已完成基础增强] 在本地交互壳中补 PDF 版式进一步美化。
 20. [已完成基础增强] 在本地交互壳中补多运行趋势与 run-to-run 差异解释。
 21. [已完成基础增强] 在本地交互壳中补更细的差异归因。
-22. [未完成] 如果后续需要，再把桌面程序从“整个目录便携”推进到“单个 exe 完全独立”。
+22. [已完成基础版] 已补单文件自解压的 standalone onefile 版；后续如需继续推进，重点是跨机器兼容性验证与收紧。
+23. [已完成基础版] 在推荐 pipeline 和本地交互壳中补 AI/离线解释摘要；默认离线，可选 OpenAI provider，失败自动回退，不上传原始结构文件。
+24. [已完成基础增强] 在推荐 pipeline 和本地交互壳中补 provenance 运行卡片；默认生成 `provenance/run_provenance_card.json/md`、`run_artifact_manifest.csv`、`run_input_file_manifest.csv` 和 `run_provenance_integrity.json`，并加入下载和汇总包；结果归档页已补 `result_archive_lineage.csv` 下载与预览，并新增 `result_archive_lineage_graph.json/html/md` 图形化时间线。
+25. [已完成基础增强] 在候选报告卡内嵌相邻候选对比摘要；推荐 pipeline 和 smoke test 会先生成 `candidate_pairwise_comparisons.csv`，再构建报告卡。
+26. [已完成基础增强] 在下一轮实验建议中补 diversity-aware 队列排序；本地软件默认按 `suggestion_rank` 展示，并显示 diversity 分组和惩罚原因。
+27. [已完成基础增强] 在下一轮实验建议中补实验计划单导出；推荐 pipeline、本地软件下载和 smoke test 均接入 `experiment_plan.csv/md/json`。
+28. [已完成基础增强] 实验计划单支持 `experiment_plan_override.csv`，可手工 include/exclude/standby/defer，并回灌 owner、cost、status 和 note。
+29. [已完成基础增强] 实验计划单新增 `experiment_plan_state_ledger.csv` 和本地软件内置编辑器；可保存编辑结果并设置为下一轮 override。
+30. [已完成基础增强] 新增 `build_experiment_state_ledger.py` 和本地软件历史页全局 ledger 面板；可汇总多个历史运行并设置为下一轮 override。
+31. [已完成基础增强] 候选对比支持自定义选择；CLI 可用 `--selected_nanobody_ids`，本地软件可选择 2 到 5 个候选生成、下载和保存对比解释。
+32. [已完成基础增强] 新增 `build_experiment_validation_report.py`，从全局 ledger 生成 `experiment_validation_labels.csv`、`experiment_validation_status_report.csv`、`experiment_validation_report.md` 和可选 `pose_features_with_experiment_labels.csv`。
+33. [已完成基础增强] 本地软件支持可配置 `label_col`，并可把验证回灌后的 `pose_features_with_experiment_labels.csv` 一键设为下一轮 `feature_csv + experiment_label` 输入。
+34. [已完成基础增强] 本地软件全局 ledger 面板新增状态/结果/override/关键词筛选、筛选后关键计数和状态分布图。
+35. [已完成基础增强] 新增验证回灌再训练前后对照报告，输出指标对照、候选排名变化、summary JSON 和 Markdown，并接入本地软件历史对比页。
+36. [已完成基础增强] 新增结果自动归档和长期趋势汇总，输出运行索引、产物 manifest、验证回灌长期趋势表和 Markdown 报告，并接入本地软件历史页。
+37. [已完成基础增强] 候选对比解释新增自动分组小结，输出 `candidate_group_comparison_summary.csv`，并在本地软件排名结果页支持预览和下载。
+38. [已完成基础增强] 新增验证证据审计，输出 `validation_evidence_summary.json`、`validation_evidence_report.md`、`validation_evidence_by_candidate.csv`、`validation_evidence_topk.csv` 和 `validation_evidence_action_items.csv`，并在本地软件排名结果页支持预览和下载。
+39. [已完成基础增强] `batch_decision_summary.md/json` 已整合验证证据审计，首页摘要可直接显示 Validation Evidence 状态和 top-k 覆盖率。
+40. [已完成基础增强] 新增一键 demo 数据集和演示入口，支持 `python run_demo_pipeline.py`、双击 `run_demo_pipeline.bat`，或在本地软件侧边栏生成/载入/立即运行 demo 输入；demo 输出包含 `DEMO_OVERVIEW.html`、`DEMO_README.md`、`DEMO_INTERPRETATION.md` 和 `REAL_DATA_STARTER/`，本地软件摘要页可一键打开 HTML 导览和真实数据 starter 文件夹。

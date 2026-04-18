@@ -1,0 +1,3 @@
+method,row_count,pdb_count,mean_coverage,mean_precision,mean_truth_overwide,mean_runtime_proxy,truth_risk_count,runtime_proxy_flag_count
+ligand_contact,2,2,0.9285714285714286,0.4807692307692307,0.30805860805860796,0.20177014355913173,0,0
+p2rank,2,2,1.0,0.3846153846153846,0.45457875457875463,0.4063821332749731,1,1

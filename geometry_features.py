@@ -840,6 +840,66 @@ def compute_pocket_features(
     return result
 
 
+def compute_pocket_shape_features(
+    pocket_residues: Any,
+    residue_reference: Any = None,
+) -> dict[str, float]:
+    """Describe pocket input size/spread without changing downstream scoring.
+
+    These features are meant as QC/proxy inputs. A high overwide proxy does not
+    mean the pocket is wrong; it means the residue definition is broad enough
+    that downstream blocking scores may need tighter interpretation.
+    """
+    result = {
+        "pocket_shape_residue_count": 0.0,
+        "pocket_shape_centroid_radius_mean": _nan(),
+        "pocket_shape_centroid_radius_p90": _nan(),
+        "pocket_shape_centroid_radius_max": _nan(),
+        "pocket_shape_atom_bbox_volume": _nan(),
+        "pocket_shape_overwide_proxy": _nan(),
+        "pocket_shape_tightness_proxy": _nan(),
+    }
+
+    pocket_geo = _resolve_pocket_geo(pocket_residues, residue_reference=residue_reference)
+    result["pocket_shape_residue_count"] = float(len(pocket_geo))
+    if not pocket_geo:
+        return result
+
+    centroids = np.vstack([geo.centroid for geo in pocket_geo]).astype(np.float64, copy=False)
+    centroids = centroids[np.isfinite(centroids).all(axis=1)]
+    if centroids.shape[0] == 0:
+        return result
+
+    pocket_center = np.mean(centroids, axis=0, dtype=np.float64)
+    centroid_radius = np.linalg.norm(centroids - pocket_center[None, :], axis=1)
+    centroid_radius = centroid_radius[np.isfinite(centroid_radius)]
+    if centroid_radius.size > 0:
+        result["pocket_shape_centroid_radius_mean"] = float(np.mean(centroid_radius))
+        result["pocket_shape_centroid_radius_p90"] = float(np.percentile(centroid_radius, 90))
+        result["pocket_shape_centroid_radius_max"] = float(np.max(centroid_radius))
+
+    atom_coords = _concat_residue_atoms(pocket_geo)
+    bbox_volume = _nan()
+    if atom_coords.shape[0] > 0:
+        finite_atoms = atom_coords[np.isfinite(atom_coords).all(axis=1)]
+        if finite_atoms.shape[0] > 0:
+            span = np.max(finite_atoms, axis=0) - np.min(finite_atoms, axis=0)
+            span = np.clip(span, 0.0, None)
+            bbox_volume = float(np.prod(span))
+            result["pocket_shape_atom_bbox_volume"] = bbox_volume
+
+    residue_count = float(len(pocket_geo))
+    count_penalty = float(np.clip((residue_count - 12.0) / 24.0, 0.0, 1.0))
+    radius_p90 = result["pocket_shape_centroid_radius_p90"]
+    radius_penalty = float(np.clip((radius_p90 - 9.0) / 12.0, 0.0, 1.0)) if np.isfinite(radius_p90) else 0.0
+    volume_penalty = float(np.clip((np.log1p(bbox_volume) - 6.0) / 3.0, 0.0, 1.0)) if np.isfinite(bbox_volume) else 0.0
+
+    overwide_proxy = float(np.clip(0.45 * count_penalty + 0.35 * radius_penalty + 0.20 * volume_penalty, 0.0, 1.0))
+    result["pocket_shape_overwide_proxy"] = overwide_proxy
+    result["pocket_shape_tightness_proxy"] = float(np.clip(1.0 - overwide_proxy, 0.0, 1.0))
+    return result
+
+
 def compute_catalytic_features(
     nanobody_atoms: Any,
     catalytic_residues: Any = None,
@@ -1245,13 +1305,32 @@ def compute_mouth_occlusion_features(
     result["mouth_aperture_block_fraction"] = aperture_fraction
     result["mouth_min_clearance"] = mouth_min_clearance
 
+    axis_fraction_clipped = float(np.clip(axis_fraction, 0.0, 1.0)) if np.isfinite(axis_fraction) else _nan()
+    aperture_fraction_clipped = float(np.clip(aperture_fraction, 0.0, 1.0)) if np.isfinite(aperture_fraction) else _nan()
+    mouth_geometry_consensus = _nan()
+    mouth_geometry_support = _nan()
+    if np.isfinite(axis_fraction_clipped) and np.isfinite(aperture_fraction_clipped):
+        # Favor consistent blockage across both the axis path and the aperture plane,
+        # rather than letting one strong sub-signal dominate the final mouth score.
+        denominator = max(axis_fraction_clipped + aperture_fraction_clipped, 1e-6)
+        harmonic = 2.0 * axis_fraction_clipped * aperture_fraction_clipped / denominator
+        balance = 1.0 - 0.50 * abs(axis_fraction_clipped - aperture_fraction_clipped)
+        mouth_geometry_consensus = float(np.clip(harmonic * np.clip(balance, 0.0, 1.0), 0.0, 1.0))
+        mouth_geometry_support = float(np.clip(0.50 * (axis_fraction_clipped + aperture_fraction_clipped), 0.0, 1.0))
+    elif np.isfinite(axis_fraction_clipped):
+        mouth_geometry_consensus = float(np.clip(0.85 * axis_fraction_clipped, 0.0, 1.0))
+        mouth_geometry_support = axis_fraction_clipped
+    elif np.isfinite(aperture_fraction_clipped):
+        mouth_geometry_consensus = float(np.clip(0.85 * aperture_fraction_clipped, 0.0, 1.0))
+        mouth_geometry_support = aperture_fraction_clipped
+
     component_pairs: list[tuple[float, float]] = []
     if np.isfinite(residue_occlusion_score):
-        component_pairs.append((residue_occlusion_score, 0.40))
-    if np.isfinite(axis_fraction):
-        component_pairs.append((float(np.clip(axis_fraction, 0.0, 1.0)), 0.25))
-    if np.isfinite(aperture_fraction):
-        component_pairs.append((float(np.clip(aperture_fraction, 0.0, 1.0)), 0.25))
+        component_pairs.append((residue_occlusion_score, 0.35))
+    if np.isfinite(mouth_geometry_consensus):
+        component_pairs.append((mouth_geometry_consensus, 0.40))
+    if np.isfinite(mouth_geometry_support):
+        component_pairs.append((mouth_geometry_support, 0.15))
     if np.isfinite(mouth_min_clearance):
         clearance_score = float(np.clip(1.0 - mouth_min_clearance / max(threshold + 1.0, 1e-6), 0.0, 1.0))
         component_pairs.append((clearance_score, 0.10))
@@ -1521,13 +1600,24 @@ def compute_substrate_clash_features(
         finite_scores = score_arr[np.isfinite(score_arr)]
         if finite_scores.size > 0:
             mean_score = float(np.nanmean(finite_scores))
+            median_score = float(np.nanmedian(finite_scores))
             best_escape_score = float(np.nanmin(finite_scores))
             exit_block_fraction = float(np.mean(finite_scores >= 0.55))
+            open_route_fraction = float(np.mean(finite_scores <= 0.35))
             result["ligand_path_exit_block_fraction"] = exit_block_fraction
             result["ligand_path_candidate_count"] = float(finite_scores.size)
-            result["ligand_path_block_score"] = float(
-                np.clip(0.50 * mean_score + 0.35 * best_escape_score + 0.15 * exit_block_fraction, 0.0, 1.0)
-            )
+            finite_clearance_for_score = clearance_arr[np.isfinite(clearance_arr)]
+            best_clearance_score = 0.0
+            if finite_clearance_for_score.size > 0:
+                best_clearance = float(np.nanmax(finite_clearance_for_score))
+                best_clearance_score = float(
+                    np.clip(best_clearance / max(path_radius + 1.0, 1e-6), 0.0, 1.0)
+                )
+            # Keep multi-exit consensus as the main signal, but explicitly reduce
+            # blockage score when one exit route remains comparatively open.
+            block_core = 0.40 * mean_score + 0.25 * median_score + 0.20 * best_escape_score + 0.15 * exit_block_fraction
+            open_route_penalty = 0.20 * open_route_fraction + 0.15 * best_clearance_score
+            result["ligand_path_block_score"] = float(np.clip(block_core - open_route_penalty, 0.0, 1.0))
         else:
             result["ligand_path_block_score"] = 0.0
             result["ligand_path_exit_block_fraction"] = 0.0
@@ -1600,6 +1690,15 @@ def compute_all_geometry_features(
         "min_distance_to_pocket": _nan(),
         "mean_min_distance_to_pocket_residues": _nan(),
     }
+    pocket_shape_defaults = {
+        "pocket_shape_residue_count": 0.0,
+        "pocket_shape_centroid_radius_mean": _nan(),
+        "pocket_shape_centroid_radius_p90": _nan(),
+        "pocket_shape_centroid_radius_max": _nan(),
+        "pocket_shape_atom_bbox_volume": _nan(),
+        "pocket_shape_overwide_proxy": _nan(),
+        "pocket_shape_tightness_proxy": _nan(),
+    }
     catalytic_defaults = {
         "catalytic_hit_count": 0.0,
         "catalytic_hit_fraction": _nan(),
@@ -1656,6 +1755,14 @@ def compute_all_geometry_features(
             residue_reference=residue_reference,
         ),
         pocket_defaults,
+    )
+    pocket_shape_features = _safe_compute(
+        "pocket_shape",
+        lambda: compute_pocket_shape_features(
+            pocket_residues=pocket_residues,
+            residue_reference=residue_reference,
+        ),
+        pocket_shape_defaults,
     )
     catalytic_features = _safe_compute(
         "catalytic",
@@ -1715,6 +1822,7 @@ def compute_all_geometry_features(
 
     all_features: dict[str, Any] = {}
     all_features.update(pocket_features)
+    all_features.update(pocket_shape_features)
     all_features.update(catalytic_features)
     all_features.update(center_features)
     all_features.update(mouth_features)
@@ -1742,6 +1850,13 @@ def compute_all_geometry_features(
         "pocket_atom_contact_count",
         "min_distance_to_pocket",
         "mean_min_distance_to_pocket_residues",
+        "pocket_shape_residue_count",
+        "pocket_shape_centroid_radius_mean",
+        "pocket_shape_centroid_radius_p90",
+        "pocket_shape_centroid_radius_max",
+        "pocket_shape_atom_bbox_volume",
+        "pocket_shape_overwide_proxy",
+        "pocket_shape_tightness_proxy",
         "catalytic_hit_count",
         "catalytic_hit_fraction",
         "min_distance_to_catalytic_residues",
@@ -1786,6 +1901,7 @@ __all__ = [
     "estimate_path_block_score",
     "estimate_path_bottleneck_features",
     "compute_pocket_features",
+    "compute_pocket_shape_features",
     "compute_catalytic_features",
     "compute_pocket_center_features",
     "infer_mouth_residues",

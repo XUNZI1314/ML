@@ -1,0 +1,68 @@
+[
+  {
+    "command": [
+      "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "inspect_cd38_ligand_candidates.py",
+      "--structure_targets_csv",
+      "benchmarks/cd38/cd38_structure_targets.csv",
+      "--truth_file",
+      "benchmarks/cd38/cd38_active_site_truth.txt",
+      "--out_dir",
+      "benchmarks\\cd38\\ligand_candidates",
+      "--distance_threshold",
+      "4.5"
+    ],
+    "returncode": 0,
+    "status": "success",
+    "tool": "ligand_candidates",
+    "summary_path": "benchmarks\\cd38\\ligand_candidates\\cd38_ligand_candidate_summary.json"
+  },
+  {
+    "command": [
+      "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "build_cd38_benchmark_expansion_plan.py",
+      "--structure_targets_csv",
+      "benchmarks/cd38/cd38_structure_targets.csv",
+      "--manifest_csv",
+      "benchmarks/cd38/cd38_benchmark_manifest.csv",
+      "--results_root",
+      "benchmarks/cd38/results",
+      "--out_dir",
+      "benchmarks\\cd38\\expansion_plan",
+      "--near_threshold",
+      "4.5"
+    ],
+    "returncode": 0,
+    "status": "success",
+    "tool": "expansion_plan",
+    "summary_path": "benchmarks\\cd38\\expansion_plan\\cd38_benchmark_expansion_summary.json"
+  },
+  {
+    "command": [
+      "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "prepare_cd38_p2rank_panel.py",
+      "--p2rank_root",
+      "benchmarks/cd38/results",
+      "--manifest_out",
+      "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv",
+      "--summary_json",
+      "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.summary.json",
+      "--report_md",
+      "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.report.md",
+      "--results_root",
+      "benchmarks/cd38/results",
+      "--truth_file",
+      "benchmarks/cd38/cd38_active_site_truth.txt",
+      "--chain_filter",
+      "A",
+      "--near_threshold",
+      "4.5",
+      "--rank_by_pdb",
+      "3ROP=2,4OGW=1"
+    ],
+    "returncode": 0,
+    "status": "success",
+    "tool": "p2rank",
+    "summary_path": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.summary.json"
+  }
+]

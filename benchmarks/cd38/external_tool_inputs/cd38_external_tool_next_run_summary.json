@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-04-18 08:58:07",
+  "action_plan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.csv",
+  "package_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+  "source_action_count": 6,
+  "selected_action_count": 4,
+  "include_package_reproducibility": false,
+  "include_ready": false,
+  "need_p2rank": true,
+  "need_fpocket": true,
+  "outputs": {
+    "runbook_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_next_run_plan.csv",
+    "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_next_run_summary.json",
+    "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_next_run.md",
+    "powershell_runner": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\run_cd38_external_next_benchmark.ps1",
+    "bash_runner": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\run_cd38_external_next_benchmark.sh"
+  }
+}

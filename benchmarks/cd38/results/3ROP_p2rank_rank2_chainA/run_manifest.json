@@ -1,0 +1,16 @@
+{
+  "method": "p2rank",
+  "predictions_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_p2rank_rank2_chainA\\source_predictions.csv",
+  "original_predictions_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_p2rank_rank2_chainA\\source_predictions.csv",
+  "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_p2rank_rank2_chainA",
+  "pdb_path": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_p2rank_rank2_chainA\\inputs\\3ROP.pdb",
+  "rcsb_pdb_id": null,
+  "truth_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_active_site_truth.txt",
+  "rank": 2,
+  "name": null,
+  "chain_filter": "A",
+  "top_n": 1,
+  "min_probability": null,
+  "near_threshold": 4.5,
+  "predicted_pocket_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_p2rank_rank2_chainA\\predicted_pocket.txt"
+}

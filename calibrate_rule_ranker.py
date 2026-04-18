@@ -260,6 +260,8 @@ def _run_aggregation_search(
     selection_metric: str,
     top_k: int,
     conformer_geo_weight: float,
+    pocket_overwide_penalty_weight: float,
+    pocket_overwide_threshold: float,
     w_mean_grid: list[float],
     w_best_grid: list[float],
     w_consistency_grid: list[float],
@@ -317,6 +319,8 @@ def _run_aggregation_search(
                             fr.pose_rule_df,
                             top_k=int(top_k),
                             conformer_geo_weight=float(conformer_geo_weight),
+                            pocket_overwide_penalty_weight=float(pocket_overwide_penalty_weight),
+                            pocket_overwide_threshold=float(pocket_overwide_threshold),
                             mean_weight=float(w_mean),
                             best_weight=float(w_best),
                             consistency_weight=float(w_consistency),
@@ -384,6 +388,8 @@ def _run_aggregation_search(
                             "w_best": float(w_best),
                             "w_consistency": float(w_consistency),
                             "w_std_penalty": float(w_std),
+                            "pocket_overwide_penalty_weight": float(pocket_overwide_penalty_weight),
+                            "pocket_overwide_threshold": float(pocket_overwide_threshold),
                         }
                         rows.append(row)
 
@@ -434,6 +440,18 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--upper_q", type=float, default=0.99)
     parser.add_argument("--top_k", type=int, default=3)
     parser.add_argument("--conformer_geo_weight", type=float, default=0.15)
+    parser.add_argument(
+        "--pocket_overwide_penalty_weight",
+        type=float,
+        default=0.0,
+        help="Optional fixed penalty weight for broad pocket definitions; default 0 keeps calibration unchanged",
+    )
+    parser.add_argument(
+        "--pocket_overwide_threshold",
+        type=float,
+        default=0.55,
+        help="Threshold for pocket_shape_overwide_proxy before optional penalty starts",
+    )
     parser.add_argument("--consistency_hit_threshold", type=float, default=0.50)
 
     parser.add_argument("--n_feature_trials", type=int, default=40)
@@ -592,6 +610,8 @@ def main() -> None:
         selection_metric=str(args.selection_metric),
         top_k=int(args.top_k),
         conformer_geo_weight=float(args.conformer_geo_weight),
+        pocket_overwide_penalty_weight=float(args.pocket_overwide_penalty_weight),
+        pocket_overwide_threshold=float(args.pocket_overwide_threshold),
         w_mean_grid=w_mean_grid,
         w_best_grid=w_best_grid,
         w_consistency_grid=w_consistency_grid,
@@ -615,6 +635,8 @@ def main() -> None:
         best["pose_rule_df"],
         top_k=int(args.top_k),
         conformer_geo_weight=float(args.conformer_geo_weight),
+        pocket_overwide_penalty_weight=float(args.pocket_overwide_penalty_weight),
+        pocket_overwide_threshold=float(args.pocket_overwide_threshold),
         mean_weight=float(best["w_mean"]),
         best_weight=float(best["w_best"]),
         consistency_weight=float(best["w_consistency"]),
@@ -642,6 +664,8 @@ def main() -> None:
             "w_consistency": float(best["w_consistency"]),
             "w_std_penalty": float(best["w_std_penalty"]),
             "conformer_geo_weight": float(args.conformer_geo_weight),
+            "pocket_overwide_penalty_weight": float(args.pocket_overwide_penalty_weight),
+            "pocket_overwide_threshold": float(args.pocket_overwide_threshold),
             "consistency_hit_threshold": float(args.consistency_hit_threshold),
             "top_k": int(args.top_k),
         },

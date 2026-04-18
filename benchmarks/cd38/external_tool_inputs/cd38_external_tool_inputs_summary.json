@@ -1,0 +1,55 @@
+{
+  "structure_targets_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_structure_targets.csv",
+  "inputs_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\inputs",
+  "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+  "prepared_structure_count": 3,
+  "p2rank_target_count": 3,
+  "fpocket_target_count": 3,
+  "expected_return_count": 6,
+  "records": [
+    {
+      "status": "prepared",
+      "pdb_id": "3ROP",
+      "source_status": "cached",
+      "copy_status": "copied",
+      "methods": [
+        "ligand_contact",
+        "p2rank",
+        "fpocket"
+      ]
+    },
+    {
+      "status": "prepared",
+      "pdb_id": "4OGW",
+      "source_status": "cached",
+      "copy_status": "copied",
+      "methods": [
+        "ligand_contact",
+        "p2rank",
+        "fpocket"
+      ]
+    },
+    {
+      "status": "prepared",
+      "pdb_id": "3F6Y",
+      "source_status": "cached",
+      "copy_status": "copied",
+      "methods": [
+        "p2rank",
+        "fpocket"
+      ]
+    }
+  ],
+  "input_manifest_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_input_manifest.csv",
+  "expected_return_manifest_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_expected_returns.csv",
+  "return_checklist_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_return_checklist.md",
+  "run_p2rank_ps1": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\run_p2rank_templates.ps1",
+  "run_fpocket_ps1": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\run_fpocket_templates.ps1",
+  "run_p2rank_sh": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\run_p2rank_templates.sh",
+  "run_fpocket_sh": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\run_fpocket_templates.sh",
+  "check_environment_ps1": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\check_external_tool_environment.ps1",
+  "refresh_readiness_ps1": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\refresh_readiness_after_external_tools.ps1",
+  "finalize_benchmark_ps1": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize_external_benchmark.ps1",
+  "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_inputs_summary.json",
+  "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_inputs.md"
+}

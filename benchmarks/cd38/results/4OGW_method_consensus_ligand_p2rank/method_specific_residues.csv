@@ -1,0 +1,15 @@
+method,residue_key,in_truth
+p2rank,A:52,False
+p2rank,A:53,False
+p2rank,A:123,False
+p2rank,A:156,False
+p2rank,A:157,False
+p2rank,A:158,False
+p2rank,A:173,False
+p2rank,A:174,False
+p2rank,A:175,False
+p2rank,A:176,False
+p2rank,A:183,False
+p2rank,A:185,False
+p2rank,A:186,False
+ligand_contact,A:220,False

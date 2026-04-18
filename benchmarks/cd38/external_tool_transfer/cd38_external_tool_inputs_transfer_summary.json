@@ -1,0 +1,19 @@
+{
+  "package_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+  "out_zip": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer\\cd38_external_tool_inputs_transfer.zip",
+  "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer",
+  "root_name": "external_tool_inputs",
+  "include_existing_outputs": false,
+  "runbook_refresh": {
+    "status": "success",
+    "selected_action_count": 4,
+    "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_next_run.md",
+    "powershell_runner": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\run_cd38_external_next_benchmark.ps1",
+    "bash_runner": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\run_cd38_external_next_benchmark.sh"
+  },
+  "file_count": 24,
+  "total_source_bytes": 2741778,
+  "manifest_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer\\cd38_external_tool_inputs_transfer_manifest.csv",
+  "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer\\cd38_external_tool_inputs_transfer_summary.json",
+  "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer\\cd38_external_tool_inputs_transfer_report.md"
+}

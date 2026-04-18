@@ -1,0 +1,8 @@
+truth_uid,best_predicted_uid,min_distance_to_predicted,is_exact_overlap,is_near_hit
+A:125:_:TRP:ATOM,A:125:_:TRP:ATOM,0.0,True,True
+A:127:_:ARG:ATOM,A:127:_:ARG:ATOM,0.0,True,True
+A:146:_:GLU:ATOM,A:146:_:GLU:ATOM,0.0,True,True
+A:155:_:ASP:ATOM,A:146:_:GLU:ATOM,3.5312871220596813,False,True
+A:189:_:TRP:ATOM,A:189:_:TRP:ATOM,0.0,True,True
+A:193:_:SER:ATOM,A:193:_:SER:ATOM,0.0,True,True
+A:226:_:GLU:ATOM,A:226:_:GLU:ATOM,0.0,True,True

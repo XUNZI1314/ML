@@ -1,0 +1,48 @@
+{
+  "pdb_path": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\4OGW_p2rank_rank1_chainA\\inputs\\4OGW.pdb",
+  "rcsb_pdb_id": null,
+  "truth_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_active_site_truth.txt",
+  "predicted_pocket_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\4OGW_p2rank_rank1_chainA\\predicted_pocket.txt",
+  "structure_chain_ids": [
+    "A"
+  ],
+  "counts": {
+    "truth_defined_keys": 7,
+    "truth_matched_keys": 7,
+    "predicted_defined_keys": 26,
+    "predicted_matched_keys": 26,
+    "truth_matched_residues": 7,
+    "predicted_matched_residues": 26,
+    "exact_overlap_residues": 7
+  },
+  "metrics": {
+    "exact_truth_coverage": 1.0,
+    "exact_predicted_precision": 0.2692307692307692,
+    "exact_jaccard": 0.2692307692307692,
+    "exact_f1": 0.42424242424242425,
+    "truth_near_coverage": 1.0,
+    "predicted_near_precision": 0.6923076923076923,
+    "mean_truth_min_distance": 0.0,
+    "median_truth_min_distance": 0.0,
+    "near_threshold": 4.5,
+    "predicted_to_truth_residue_ratio": 3.7142857142857144,
+    "extra_predicted_residue_count": 19.0,
+    "extra_predicted_fraction": 0.7307692307692307,
+    "far_predicted_residue_count": 8.0,
+    "far_predicted_fraction": 0.3076923076923077,
+    "overwide_pocket_score": 0.6174908424908425
+  },
+  "warnings": {
+    "truth": [],
+    "predicted": []
+  },
+  "overlap_uids": [
+    "A:125:_:TRP:ATOM",
+    "A:127:_:ARG:ATOM",
+    "A:146:_:GLU:ATOM",
+    "A:155:_:ASP:ATOM",
+    "A:189:_:TRP:ATOM",
+    "A:193:_:SER:ATOM",
+    "A:226:_:GLN:ATOM"
+  ]
+}

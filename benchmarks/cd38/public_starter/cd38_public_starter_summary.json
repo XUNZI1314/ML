@@ -1,0 +1,189 @@
+{
+  "generated_at": "2026-04-18 08:58:07",
+  "repo_root": "D:\\minimal_ML_test",
+  "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\public_starter",
+  "commands": [
+    {
+      "name": "summarize_cd38_benchmarks",
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "summarize_cd38_benchmarks.py"
+      ],
+      "returncode": 0,
+      "status": "success"
+    },
+    {
+      "name": "inspect_cd38_ligand_candidates",
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "inspect_cd38_ligand_candidates.py"
+      ],
+      "returncode": 0,
+      "status": "success"
+    },
+    {
+      "name": "analyze_cd38_pocket_parameter_sensitivity",
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "analyze_cd38_pocket_parameter_sensitivity.py"
+      ],
+      "returncode": 0,
+      "status": "success"
+    },
+    {
+      "name": "build_cd38_proxy_calibration_report",
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "build_cd38_proxy_calibration_report.py"
+      ],
+      "returncode": 0,
+      "status": "success"
+    },
+    {
+      "name": "prepare_cd38_external_tool_inputs",
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "prepare_cd38_external_tool_inputs.py"
+      ],
+      "returncode": 0,
+      "status": "success"
+    },
+    {
+      "name": "check_cd38_external_tool_environment",
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "check_cd38_external_tool_environment.py"
+      ],
+      "returncode": 0,
+      "status": "success"
+    },
+    {
+      "name": "refresh_cd38_benchmark_readiness",
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "refresh_cd38_benchmark_readiness.py",
+        "--p2rank_root",
+        "benchmarks/cd38/results",
+        "--rank_by_pdb",
+        "3ROP=2,4OGW=1",
+        "--continue_on_error"
+      ],
+      "returncode": 0,
+      "status": "success"
+    },
+    {
+      "name": "build_cd38_external_benchmark_action_plan",
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "build_cd38_external_benchmark_action_plan.py"
+      ],
+      "returncode": 0,
+      "status": "success"
+    },
+    {
+      "name": "build_cd38_external_tool_runbook",
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "build_cd38_external_tool_runbook.py"
+      ],
+      "returncode": 0,
+      "status": "success"
+    }
+  ],
+  "artifacts": {
+    "panel_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\cd38_benchmark_panel.csv",
+    "panel_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\cd38_benchmark_panel.md",
+    "ligand_candidate_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\ligand_candidates\\cd38_ligand_candidate_report.md",
+    "parameter_sensitivity_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\parameter_sensitivity\\cd38_pocket_parameter_sensitivity_report.md",
+    "proxy_calibration_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\proxy_calibration\\cd38_proxy_calibration_report.md",
+    "readiness_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\cd38_benchmark_readiness_report.md",
+    "external_tool_preflight_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\preflight\\cd38_external_tool_preflight_report.md",
+    "action_plan_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.md",
+    "external_tool_next_run_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_next_run.md",
+    "external_tool_next_run_ps1": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\run_cd38_external_next_benchmark.ps1"
+  },
+  "artifact_presence": {
+    "panel_csv": true,
+    "panel_md": true,
+    "ligand_candidate_report_md": true,
+    "parameter_sensitivity_report_md": true,
+    "proxy_calibration_report_md": true,
+    "readiness_report_md": true,
+    "external_tool_preflight_report_md": true,
+    "action_plan_md": true,
+    "external_tool_next_run_md": true,
+    "external_tool_next_run_ps1": true
+  },
+  "panel": {
+    "row_count": 4,
+    "method_counts": {
+      "ligand_contact": 2,
+      "p2rank": 2
+    },
+    "pdb_counts": {
+      "3ROP": 2,
+      "4OGW": 2
+    }
+  },
+  "proxy_calibration": {
+    "recommendation": {
+      "evidence_level": "low",
+      "recommended_runtime_proxy_threshold": 0.55,
+      "recommended_default_penalty_weight": 0.0,
+      "optional_experimental_penalty_weight": 0.15,
+      "recommended_policy": "keep_default_penalty_off",
+      "best_empirical_threshold": 0.25,
+      "best_empirical_threshold_score": {
+        "balanced_accuracy": 1.0,
+        "f1": 1.0,
+        "sensitivity": 1.0,
+        "specificity": 1.0
+      },
+      "reason": "Current benchmark is useful for direction, but not large/diverse enough to change defaults.",
+      "blockers": [
+        "benchmark structures are too few (2 < 5)",
+        "truth risk/non-risk split is too small (1/3)",
+        "no real fpocket rows and fewer than three method families are present"
+      ],
+      "next_actions": [
+        "Add real fpocket outputs for 3ROP/4OGW/3F6Y and rerun finalize_cd38_external_benchmark.py --run_discovered --run_sensitivity.",
+        "Add at least one non-CD38 benchmark protein before changing global ranking defaults.",
+        "Keep --pocket_overwide_penalty_weight at 0.0 by default; use 0.15 only for sensitivity review runs."
+      ]
+    },
+    "benchmark_row_count": 4,
+    "structure_count": null,
+    "method_count": 2,
+    "default_penalty_recommended": null
+  },
+  "readiness": {
+    "missing_or_pending_count": 4,
+    "status_counts": {
+      "complete": 4,
+      "needs_fpocket_output": 3,
+      "needs_p2rank_output": 1
+    },
+    "p2rank_status": "ready",
+    "p2rank_manifest_row_count": 2,
+    "fpocket_status": "not_run",
+    "fpocket_manifest_row_count": null,
+    "next_actions": [
+      "Review the P2Rank readiness report; rerun with --run_discovered or run the generated P2Rank manifest when ready.",
+      "Run external fpocket for structures listed as needs_fpocket_output, then rerun with --fpocket_root."
+    ]
+  },
+  "action_plan": {
+    "overall_status": "blocked_external_outputs_missing",
+    "action_count": 6,
+    "benchmark_gap_action_count": 4,
+    "missing_benchmark_gap_action_count": 4,
+    "p2rank_tool_available": false,
+    "fpocket_tool_available": false
+  },
+  "failed_command_count": 0,
+  "completed_command_count": 9,
+  "outputs": {
+    "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\public_starter\\cd38_public_starter_summary.json",
+    "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\public_starter\\cd38_public_starter_report.md"
+  }
+}

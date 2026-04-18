@@ -25,6 +25,7 @@ from Bio.PDB.Structure import Structure
 
 
 _RESSEQ_ICODE_RE = re.compile(r"^(?P<resseq>[+-]?\d+)(?P<icode>[A-Za-z]?)$")
+_RESSEQ_RANGE_RE = re.compile(r"^(?P<start>[+-]?\d+)\s*-\s*(?P<end>[+-]?\d+)$")
 _BLANK_CHAIN_TOKEN = "_"
 _EXTERNAL_OUTPUT_SUFFIXES = frozenset({".txt", ".csv", ".tsv", ".json", ".res", ".lst", ".list", ".out", ".dat"})
 _EXTERNAL_TEXT_COMMENT_PREFIXES = ("#", ";", "//")
@@ -237,6 +238,32 @@ def _parse_resseq_icode(raw: str, explicit_icode: str = "") -> tuple[int, str]:
     return resseq, icode
 
 
+def _normalize_residue_definition_text(value: Any) -> str:
+    """Normalize common text variants in residue definition files."""
+    return (
+        str(value)
+        .replace("\ufeff", "")
+        .replace("：", ":")
+        .replace("，", ",")
+        .replace("–", "-")
+        .replace("—", "-")
+        .strip()
+    )
+
+
+def _expand_residue_range_token(raw: str) -> list[int] | None:
+    """Expand a plain integer residue range token such as ``37-40``."""
+    text = str(raw).strip()
+    match = _RESSEQ_RANGE_RE.match(text)
+    if not match:
+        return None
+    start = int(match.group("start"))
+    end = int(match.group("end"))
+    if start > end:
+        raise ValueError(f"Invalid residue range {raw!r}: start must be <= end.")
+    return list(range(start, end + 1))
+
+
 def normalize_residue_key(chain_id: Any, resseq: Any, icode: Any = "") -> str:
     """Normalize residue identity to a canonical key.
 
@@ -278,8 +305,11 @@ def parse_residue_token(token: str, default_chain: str | None = None) -> str:
     - "A 45"
     - "A 45A"
     - "45" or "45A" when ``default_chain`` is provided
+
+    Use ``parse_residue_token_or_range`` when range syntax such as
+    ``A:37-40`` should be accepted.
     """
-    text = str(token).strip()
+    text = _normalize_residue_definition_text(token)
     if not text:
         raise ValueError("Empty residue entry.")
 
@@ -294,7 +324,8 @@ def parse_residue_token(token: str, default_chain: str | None = None) -> str:
             resseq, icode = _parse_resseq_icode(res_token, explicit_icode=icode_token)
             return normalize_residue_key(chain, resseq, icode)
         raise ValueError(
-            f"Invalid residue entry {text!r}. Use 'A:45', 'A:45A', 'A:45:A', or 'A 45'."
+            f"Invalid residue entry {text!r}. Use 'A:45', 'A:45A', 'A:45:A', "
+            "'A 45', or parse ranges via parse_residue_token_or_range."
         )
 
     ws_parts = [p for p in text.split() if p]
@@ -310,11 +341,48 @@ def parse_residue_token(token: str, default_chain: str | None = None) -> str:
     if default_chain is None:
         raise ValueError(
             f"Residue entry {text!r} has no chain ID. "
-            "Use formats like 'A:45', 'A 45', or provide a chain prefix earlier on the line."
+            "Use formats like 'A:45', 'A 45', 'A:37-40', or provide a chain prefix earlier on the line."
         )
 
     resseq, icode = _parse_resseq_icode(text)
     return normalize_residue_key(default_chain, resseq, icode)
+
+
+def parse_residue_token_or_range(token: str, default_chain: str | None = None) -> tuple[str, ...]:
+    """Parse one residue token, expanding integer ranges when present.
+
+    Supported range formats include ``A:37-40``, ``A 37-40`` and ``37-40``
+    when ``default_chain`` is provided. Ranges use inclusive endpoints and do
+    not support insertion codes.
+    """
+    text = _normalize_residue_definition_text(token)
+    if not text:
+        raise ValueError("Empty residue entry.")
+
+    if ":" in text:
+        parts = [p.strip() for p in text.split(":") if p.strip()]
+        if len(parts) == 2:
+            chain, res_token = parts
+            expanded = _expand_residue_range_token(res_token)
+            if expanded is not None:
+                return tuple(normalize_residue_key(chain, resseq) for resseq in expanded)
+        if len(parts) == 3:
+            _, res_token, icode_token = parts
+            if _expand_residue_range_token(res_token) is not None or "-" in str(icode_token):
+                raise ValueError("Residue ranges do not support insertion-code syntax.")
+
+    ws_parts = [p for p in text.split() if p]
+    if len(ws_parts) == 2:
+        chain, res_token = ws_parts
+        expanded = _expand_residue_range_token(res_token)
+        if expanded is not None:
+            return tuple(normalize_residue_key(chain, resseq) for resseq in expanded)
+    elif len(ws_parts) == 1 and default_chain is not None:
+        expanded = _expand_residue_range_token(ws_parts[0])
+        if expanded is not None:
+            return tuple(normalize_residue_key(default_chain, resseq) for resseq in expanded)
+
+    return (parse_residue_token(text, default_chain=default_chain),)
 
 
 def _parse_residue_entry(token: str, default_chain: str | None = None) -> str:
@@ -327,10 +395,12 @@ def _split_line_tokens(line: str) -> list[str]:
 
     Handles lines such as:
     - "A:45,67,89"
+    - "A:37-40"
     - "A 45"
     - "A 45 67 89"
     - "A:45 67 89"
     """
+    line = _normalize_residue_definition_text(line)
     segments = [seg.strip() for seg in line.split(",") if seg.strip()]
     if not segments:
         return []
@@ -355,7 +425,9 @@ def load_residue_set(file_path: str) -> set[str]:
       ``A:45``
     - Format B (multiple residues in one line):
       ``A:45,67,89,102``
-    - Format C: blank lines and comment lines starting with ``#``.
+    - Format C (inclusive ranges):
+      ``A:37-40`` is equivalent to ``A:37,A:38,A:39,A:40``.
+    - Format D: blank lines and comment lines starting with ``#``.
 
     Args:
         file_path: Path to residue definition text file.
@@ -393,16 +465,16 @@ def load_residue_set(file_path: str) -> set[str]:
         default_chain: str | None = None
         for idx, token in enumerate(tokens):
             try:
-                key = parse_residue_token(token, default_chain=default_chain)
+                keys = parse_residue_token_or_range(token, default_chain=default_chain)
             except ValueError as exc:
                 raise ValueError(
                     f"Invalid residue format at {path}:{line_no}: {token!r}. {exc}"
                 ) from exc
 
-            residue_keys.add(key)
+            residue_keys.update(keys)
 
             if idx == 0:
-                default_chain = key.split(":", 1)[0]
+                default_chain = keys[0].split(":", 1)[0]
 
     return residue_keys
 
@@ -1176,9 +1248,9 @@ def _extract_residue_keys_from_text(text: str) -> set[str]:
                 continue
 
             try:
-                key = parse_residue_token(tok, default_chain=default_chain)
-                residue_keys.add(key)
-                default_chain = key.split(":", 1)[0]
+                keys = parse_residue_token_or_range(tok, default_chain=default_chain)
+                residue_keys.update(keys)
+                default_chain = keys[0].split(":", 1)[0]
                 continue
             except ValueError:
                 pass
@@ -1225,7 +1297,7 @@ def _extract_residue_keys_from_json(payload: Any, default_chain: str | None = No
             value = payload[key]
             if isinstance(value, str):
                 try:
-                    residue_keys.add(parse_residue_token(value, default_chain=chain_value))
+                    residue_keys.update(parse_residue_token_or_range(value, default_chain=chain_value))
                     continue
                 except ValueError:
                     residue_keys.update(_extract_residue_keys_from_text(value))
@@ -1257,7 +1329,7 @@ def _extract_residue_keys_from_json(payload: Any, default_chain: str | None = No
 
     if isinstance(payload, str):
         try:
-            residue_keys.add(parse_residue_token(payload, default_chain=default_chain))
+            residue_keys.update(parse_residue_token_or_range(payload, default_chain=default_chain))
             return residue_keys
         except ValueError:
             return _extract_residue_keys_from_text(payload)
@@ -1405,6 +1477,7 @@ __all__ = [
     "PocketDefinition",
     "ExternalPocketToolAdapter",
     "parse_residue_token",
+    "parse_residue_token_or_range",
     "load_residue_set",
     "normalize_residue_key",
     "build_structure_residue_index",

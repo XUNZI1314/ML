@@ -1,0 +1,8 @@
+label,requested_key,matched_key,uid,chain_id,resseq,icode,resname
+predicted,A:126,A:126,A:126:_:SER:ATOM,A,126,,SER
+predicted,A:129,A:129,A:129:_:LYS:ATOM,A,129,,LYS
+predicted,A:145,A:145,A:145:_:LEU:ATOM,A,145,,LEU
+predicted,A:156,A:156,A:156:_:ASP:ATOM,A,156,,ASP
+predicted,A:220,A:220,A:220:_:SER:ATOM,A,220,,SER
+predicted,A:221,A:221,A:221:_:THR:ATOM,A,221,,THR
+predicted,A:222,A:222,A:222:_:PHE:ATOM,A,222,,PHE

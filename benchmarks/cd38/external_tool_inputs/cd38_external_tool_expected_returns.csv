@@ -1,0 +1,7 @@
+pdb_id,method,expected_return_path,required_pattern,generated_by,coverage_key,notes
+3ROP,p2rank,p2rank_outputs/3ROP/3ROP.pdb_predictions.csv,p2rank_outputs/3ROP/*_predictions.csv,run_p2rank_templates.ps1 or run_p2rank_templates.sh,3ROP:p2rank,Required for P2Rank benchmark import coverage.
+3ROP,fpocket,fpocket_runs/3ROP/3ROP_out/pockets/pocket*_atm.pdb,fpocket_runs/3ROP/3ROP_out/pockets/pocket*_atm.pdb,run_fpocket_templates.ps1 or run_fpocket_templates.sh,3ROP:fpocket,At least one pocket*_atm.pdb is required for fpocket benchmark import coverage.
+4OGW,p2rank,p2rank_outputs/4OGW/4OGW.pdb_predictions.csv,p2rank_outputs/4OGW/*_predictions.csv,run_p2rank_templates.ps1 or run_p2rank_templates.sh,4OGW:p2rank,Required for P2Rank benchmark import coverage.
+4OGW,fpocket,fpocket_runs/4OGW/4OGW_out/pockets/pocket*_atm.pdb,fpocket_runs/4OGW/4OGW_out/pockets/pocket*_atm.pdb,run_fpocket_templates.ps1 or run_fpocket_templates.sh,4OGW:fpocket,At least one pocket*_atm.pdb is required for fpocket benchmark import coverage.
+3F6Y,p2rank,p2rank_outputs/3F6Y/3F6Y.pdb_predictions.csv,p2rank_outputs/3F6Y/*_predictions.csv,run_p2rank_templates.ps1 or run_p2rank_templates.sh,3F6Y:p2rank,Required for P2Rank benchmark import coverage.
+3F6Y,fpocket,fpocket_runs/3F6Y/3F6Y_out/pockets/pocket*_atm.pdb,fpocket_runs/3F6Y/3F6Y_out/pockets/pocket*_atm.pdb,run_fpocket_templates.ps1 or run_fpocket_templates.sh,3F6Y:fpocket,At least one pocket*_atm.pdb is required for fpocket benchmark import coverage.

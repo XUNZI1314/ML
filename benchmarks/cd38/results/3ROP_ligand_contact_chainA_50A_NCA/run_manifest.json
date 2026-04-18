@@ -1,0 +1,18 @@
+{
+  "method": "ligand_contact",
+  "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_ligand_contact_chainA_50A_NCA",
+  "pdb_path": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_ligand_contact_chainA_50A_NCA\\inputs\\3ROP.pdb",
+  "rcsb_pdb_id": null,
+  "truth_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_active_site_truth.txt",
+  "protein_chain": "A",
+  "ligand_chain": "A",
+  "ligand_resnames": [
+    "50A",
+    "NCA"
+  ],
+  "ligand_resseqs": [],
+  "distance_threshold": 4.5,
+  "include_neighbor_shell": 0.0,
+  "near_threshold": 4.5,
+  "predicted_pocket_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_ligand_contact_chainA_50A_NCA\\predicted_pocket.txt"
+}

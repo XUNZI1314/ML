@@ -1,0 +1,17 @@
+residue_key,support_count,support_fraction,methods,is_consensus,is_method_specific,in_truth,in_ligand_contact,in_p2rank
+A:124,1,0.5,ligand_contact,False,True,False,True,False
+A:125,2,1.0,ligand_contact;p2rank,True,False,True,True,True
+A:126,2,1.0,ligand_contact;p2rank,True,False,False,True,True
+A:127,2,1.0,ligand_contact;p2rank,True,False,True,True,True
+A:129,1,0.5,p2rank,False,True,False,False,True
+A:145,2,1.0,ligand_contact;p2rank,True,False,False,True,True
+A:146,2,1.0,ligand_contact;p2rank,True,False,True,True,True
+A:155,1,0.5,p2rank,False,True,True,False,True
+A:156,1,0.5,p2rank,False,True,False,False,True
+A:189,2,1.0,ligand_contact;p2rank,True,False,True,True,True
+A:193,2,1.0,ligand_contact;p2rank,True,False,True,True,True
+A:196,1,0.5,ligand_contact,False,True,False,True,False
+A:220,2,1.0,ligand_contact;p2rank,True,False,False,True,True
+A:221,2,1.0,ligand_contact;p2rank,True,False,False,True,True
+A:222,2,1.0,ligand_contact;p2rank,True,False,False,True,True
+A:226,2,1.0,ligand_contact;p2rank,True,False,True,True,True

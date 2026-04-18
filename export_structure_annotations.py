@@ -29,7 +29,7 @@ from pocket_io import (
     load_residue_set,
     match_residues_in_structure,
     normalize_residue_key,
-    parse_residue_token,
+    parse_residue_token_or_range,
 )
 
 
@@ -44,7 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--key_residues",
         default=None,
-        help="Optional inline user key residues, e.g. 'A:45,A:46' or 'A:45 46 47'",
+        help="Optional inline user key residues, e.g. 'A:45,A:46', 'A:45 46 47', or 'A:37-40'",
     )
     parser.add_argument("--key_residue_file", default=None, help="Optional user key residue definition file")
     parser.add_argument(
@@ -167,7 +167,7 @@ def _split_inline_residue_tokens(line: str, default_chain: str | None = None) ->
                 all_can_use_default = True
                 for token in ws_parts:
                     try:
-                        parse_residue_token(token, default_chain=default_chain)
+                        parse_residue_token_or_range(token, default_chain=default_chain)
                     except ValueError:
                         all_can_use_default = False
                         break
@@ -204,10 +204,10 @@ def _parse_inline_residue_keys(text: str | None, default_chain: str | None = Non
 
         line_default_chain = running_default_chain
         for idx, token in enumerate(tokens):
-            key = parse_residue_token(token, default_chain=line_default_chain)
-            residue_keys.add(key)
+            keys = parse_residue_token_or_range(token, default_chain=line_default_chain)
+            residue_keys.update(keys)
             if idx == 0:
-                line_default_chain = key.split(":", 1)[0]
+                line_default_chain = keys[0].split(":", 1)[0]
                 if running_default_chain is None:
                     running_default_chain = line_default_chain
 

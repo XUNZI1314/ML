@@ -1,0 +1,29 @@
+{
+  "package_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+  "manifest_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_input_manifest.csv",
+  "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\preflight",
+  "path_resolution": "package_portable_first",
+  "manifest_row_count": 3,
+  "pdb_input_ready_count": 3,
+  "p2rank_ready_count": 0,
+  "p2rank_missing_output_count": 3,
+  "fpocket_ready_count": 0,
+  "fpocket_missing_output_count": 3,
+  "tools": {
+    "p2rank": {
+      "command": "prank",
+      "available": false,
+      "path": ""
+    },
+    "fpocket": {
+      "command": "fpocket",
+      "available": false,
+      "path": ""
+    }
+  },
+  "next_actions": [
+    "P2Rank command is not available on PATH; install P2Rank or run run_p2rank_templates.ps1 on another machine, then copy outputs back.",
+    "fpocket command is not available on PATH; install fpocket or run run_fpocket_templates.ps1 on another machine, then copy outputs back.",
+    "After external tools finish, run benchmarks/cd38/external_tool_inputs/refresh_readiness_after_external_tools.ps1."
+  ]
+}

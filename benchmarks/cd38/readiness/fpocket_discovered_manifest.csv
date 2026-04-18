@@ -1,0 +1,1 @@
+enabled,result_name,method,rcsb_pdb_id,pdb_path,predictions_csv,fpocket_pocket_pdb,predicted_pocket_file,protein_chain,ligand_chain,ligand_resnames,ligand_resseqs,distance_threshold,include_neighbor_shell,near_threshold,rank,name,chain_filter,top_n,min_probability,include_hetatm

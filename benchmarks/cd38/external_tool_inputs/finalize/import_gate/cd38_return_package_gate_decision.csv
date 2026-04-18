@@ -1,0 +1,2 @@
+gate_status,source_diagnosis,candidate_file_count,ready_expected_output_count,expected_output_count,missing_expected_output_count,synthetic_fixture_detected,decision_message
+FAIL_INPUT_PACKAGE,input_package_without_external_outputs,0,0,6,6,False,"The source looks like the original transfer/input package, not a completed return package."

@@ -1,0 +1,127 @@
+{
+  "structure_targets_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_structure_targets.csv",
+  "manifest_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_benchmark_manifest.csv",
+  "results_root": "D:\\minimal_ML_test\\benchmarks\\cd38\\results",
+  "truth_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_active_site_truth.txt",
+  "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness",
+  "run_discovered": false,
+  "ligand_candidates": {
+    "tool": "ligand_candidates",
+    "status": "ready",
+    "structure_count": 3,
+    "candidate_count": 608,
+    "recommended_count": 3,
+    "structures_without_recommended_ligand": [
+      "3F6Y"
+    ]
+  },
+  "expansion_plan": {
+    "tool": "expansion_plan",
+    "status": "ready",
+    "target_structure_count": 3,
+    "target_method_count": 8,
+    "missing_or_pending_count": 4,
+    "status_counts": {
+      "complete": 4,
+      "needs_fpocket_output": 3,
+      "needs_p2rank_output": 1
+    }
+  },
+  "p2rank": {
+    "tool": "p2rank",
+    "status": "ready",
+    "roots": [
+      "benchmarks/cd38/results"
+    ],
+    "discovered_prediction_file_count": 2,
+    "manifest_row_count": 2,
+    "skipped_count": 0,
+    "recommended_next_action": "Manifest rows were created; run the generated manifest or rerun this script with --run."
+  },
+  "fpocket": {
+    "tool": "fpocket",
+    "status": "not_run",
+    "roots": []
+  },
+  "commands": [
+    {
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "inspect_cd38_ligand_candidates.py",
+        "--structure_targets_csv",
+        "benchmarks/cd38/cd38_structure_targets.csv",
+        "--truth_file",
+        "benchmarks/cd38/cd38_active_site_truth.txt",
+        "--out_dir",
+        "benchmarks\\cd38\\ligand_candidates",
+        "--distance_threshold",
+        "4.5"
+      ],
+      "returncode": 0,
+      "status": "success",
+      "tool": "ligand_candidates",
+      "summary_path": "benchmarks\\cd38\\ligand_candidates\\cd38_ligand_candidate_summary.json"
+    },
+    {
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "build_cd38_benchmark_expansion_plan.py",
+        "--structure_targets_csv",
+        "benchmarks/cd38/cd38_structure_targets.csv",
+        "--manifest_csv",
+        "benchmarks/cd38/cd38_benchmark_manifest.csv",
+        "--results_root",
+        "benchmarks/cd38/results",
+        "--out_dir",
+        "benchmarks\\cd38\\expansion_plan",
+        "--near_threshold",
+        "4.5"
+      ],
+      "returncode": 0,
+      "status": "success",
+      "tool": "expansion_plan",
+      "summary_path": "benchmarks\\cd38\\expansion_plan\\cd38_benchmark_expansion_summary.json"
+    },
+    {
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "prepare_cd38_p2rank_panel.py",
+        "--p2rank_root",
+        "benchmarks/cd38/results",
+        "--manifest_out",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv",
+        "--summary_json",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.summary.json",
+        "--report_md",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.report.md",
+        "--results_root",
+        "benchmarks/cd38/results",
+        "--truth_file",
+        "benchmarks/cd38/cd38_active_site_truth.txt",
+        "--chain_filter",
+        "A",
+        "--near_threshold",
+        "4.5",
+        "--rank_by_pdb",
+        "3ROP=2,4OGW=1"
+      ],
+      "returncode": 0,
+      "status": "success",
+      "tool": "p2rank",
+      "summary_path": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.summary.json"
+    }
+  ],
+  "outputs": {
+    "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\cd38_benchmark_readiness_summary.json",
+    "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\cd38_benchmark_readiness_report.md",
+    "commands_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\cd38_benchmark_readiness_commands.json",
+    "expansion_missing_actions_csv": "benchmarks\\cd38\\expansion_plan\\cd38_benchmark_missing_actions.csv",
+    "ligand_candidate_report_md": "benchmarks\\cd38\\ligand_candidates\\cd38_ligand_candidate_report.md",
+    "p2rank_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.report.md",
+    "fpocket_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv.report.md"
+  },
+  "next_actions": [
+    "Review the P2Rank readiness report; rerun with --run_discovered or run the generated P2Rank manifest when ready.",
+    "Run external fpocket for structures listed as needs_fpocket_output, then rerun with --fpocket_root."
+  ]
+}

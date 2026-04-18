@@ -1,0 +1,31 @@
+{
+  "predictions_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\3ROP_p2rank_rank2_chainA\\source_predictions.csv",
+  "selected_pockets": [
+    {
+      "name": "pocket2",
+      "rank": 2,
+      "score": 14.68,
+      "probability": 0.731,
+      "residue_count_after_filter": 14
+    }
+  ],
+  "chain_filter": "A",
+  "top_n": null,
+  "residue_count": 14,
+  "residue_keys": [
+    "A:125",
+    "A:126",
+    "A:127",
+    "A:129",
+    "A:145",
+    "A:146",
+    "A:155",
+    "A:156",
+    "A:189",
+    "A:193",
+    "A:220",
+    "A:221",
+    "A:222",
+    "A:226"
+  ]
+}

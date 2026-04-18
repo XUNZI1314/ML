@@ -1,0 +1,4 @@
+enabled,priority,pdb_id,protein_chain,ligand_chain,ligand_resnames,ligand_resseqs,desired_methods,p2rank_predictions_csv,fpocket_root,notes
+true,1,3ROP,A,A,"50A,NCA",,"ligand_contact,p2rank,fpocket",benchmarks/cd38/results/3ROP_p2rank_rank2_chainA/source_predictions.csv,,Current ligand-contact and P2Rank baseline; real fpocket output still needed.
+true,1,4OGW,A,A,NMN,,"ligand_contact,p2rank,fpocket",benchmarks/cd38/results/4OGW_p2rank_rank1_chainA/source_predictions.csv,,Current mutant ligand-contact and P2Rank baseline; real fpocket output still needed.
+true,2,3F6Y,A,,,,"p2rank,fpocket",,,"Apo-like CD38 structure for pocket-finder testing; ligand scan found no active-site ligand candidate, so ligand-contact baseline is skipped."

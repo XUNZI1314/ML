@@ -17,6 +17,7 @@ import pandas as pd
 from ranking_common import (
     CONSISTENCY_WEIGHTS,
     GEOMETRY_AUX_WEIGHTS,
+    apply_pocket_overwide_penalty,
     build_blocking_explanation,
     compute_consistency_score,
     compute_weighted_scaled_mean,
@@ -87,6 +88,8 @@ def aggregate_conformer_scores(
     top_k: int = 3,
     blend_optional: bool = True,
     optional_weight: float = 0.15,
+    pocket_overwide_penalty_weight: float = 0.0,
+    pocket_overwide_threshold: float = 0.55,
 ) -> pd.DataFrame:
     """Aggregate pose-level predictions into conformer-level scores.
 
@@ -131,6 +134,9 @@ def aggregate_conformer_scores(
             "ligand_path_candidate_count",
             "delta_pocket_occupancy_proxy",
             "pocket_block_volume_proxy",
+            "pocket_shape_residue_count",
+            "pocket_shape_overwide_proxy",
+            "pocket_shape_tightness_proxy",
         ]
         if c in df.columns
     ]
@@ -181,10 +187,16 @@ def aggregate_conformer_scores(
         w_pred_mean = 0.70 * pred_mass
         w_pred_best = 0.30 * pred_mass
 
-        conformer_score = (
+        conformer_score_raw = (
             w_pred_mean * float(mean_topk_pred_prob)
             + w_pred_best * float(best_pose_prob)
             + w_geo * (float(geo_aux_score) if np.isfinite(geo_aux_score) else 0.0)
+        )
+        conformer_score, overwide_penalty, overwide_weight = apply_pocket_overwide_penalty(
+            conformer_score_raw,
+            row.get("mean_topk_pocket_shape_overwide_proxy"),
+            penalty_weight=float(pocket_overwide_penalty_weight),
+            threshold=float(pocket_overwide_threshold),
         )
 
         row["optional_signal"] = geo_aux_score
@@ -192,6 +204,9 @@ def aggregate_conformer_scores(
         row["score_weight_pred_mean"] = w_pred_mean
         row["score_weight_best_pose"] = w_pred_best
         row["score_weight_geo_aux"] = w_geo
+        row["score_before_pocket_overwide_penalty"] = float(np.clip(conformer_score_raw, 0.0, 1.0))
+        row["pocket_overwide_penalty"] = overwide_penalty
+        row["score_weight_pocket_overwide_penalty"] = overwide_weight
         row["conformer_score"] = float(np.clip(conformer_score, 0.0, 1.0))
         rows.append(row)
 
@@ -310,6 +325,11 @@ def aggregate_nanobody_scores(
             "mean_topk_ligand_path_min_clearance",
             "mean_topk_delta_pocket_occupancy_proxy",
             "mean_topk_pocket_block_volume_proxy",
+            "mean_topk_pocket_shape_residue_count",
+            "mean_topk_pocket_shape_overwide_proxy",
+            "mean_topk_pocket_shape_tightness_proxy",
+            "pocket_overwide_penalty",
+            "score_weight_pocket_overwide_penalty",
         ]:
             row[col] = safe_mean_if_exists(g2, col)
 
@@ -394,6 +414,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable geometry auxiliary blending in conformer score",
     )
+    parser.add_argument(
+        "--pocket_overwide_penalty_weight",
+        type=float,
+        default=0.0,
+        help="Optional penalty weight for broad pocket definitions; default 0 keeps ranking unchanged",
+    )
+    parser.add_argument(
+        "--pocket_overwide_threshold",
+        type=float,
+        default=0.55,
+        help="Threshold for pocket_shape_overwide_proxy before optional penalty starts",
+    )
 
     # Final nanobody score controls.
     parser.add_argument("--alpha", type=float, default=0.15, help="Backward-compatible std penalty weight")
@@ -431,6 +463,8 @@ def main() -> None:
         top_k=int(args.top_k),
         blend_optional=not bool(args.disable_optional_blend),
         optional_weight=float(args.optional_weight),
+        pocket_overwide_penalty_weight=float(args.pocket_overwide_penalty_weight),
+        pocket_overwide_threshold=float(args.pocket_overwide_threshold),
     )
 
     nanobody_df = aggregate_nanobody_scores(

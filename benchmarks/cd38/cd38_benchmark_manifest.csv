@@ -1,0 +1,5 @@
+enabled,result_name,method,rcsb_pdb_id,pdb_path,predictions_csv,fpocket_pocket_pdb,predicted_pocket_file,protein_chain,ligand_chain,ligand_resnames,ligand_resseqs,distance_threshold,include_neighbor_shell,near_threshold,rank,name,chain_filter,top_n,min_probability,include_hetatm
+true,3ROP_ligand_contact_chainA_50A_NCA,ligand_contact,3ROP,,,,,A,A,"50A,NCA",,4.5,0.0,4.5,,,,,,
+true,4OGW_ligand_contact_chainA_NMN,ligand_contact,4OGW,,,,,A,A,NMN,,4.5,0.0,4.5,,,,,,
+true,3ROP_p2rank_rank2_chainA,p2rank,3ROP,,benchmarks/cd38/results/3ROP_p2rank_rank2_chainA/source_predictions.csv,,,,,,,,,4.5,2,,A,1,,
+true,4OGW_p2rank_rank1_chainA,p2rank,4OGW,,benchmarks/cd38/results/4OGW_p2rank_rank1_chainA/source_predictions.csv,,,,,,,,,4.5,1,,A,1,,

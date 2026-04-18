@@ -61,6 +61,66 @@ def compute_weighted_scaled_mean(
     return float(numerator / denominator) if denominator > 0.0 else float("nan")
 
 
+def compute_pocket_overwide_penalty(
+    overwide_proxy: Any,
+    threshold: float = 0.55,
+) -> float:
+    """Map a pocket overwide proxy to a normalized penalty severity.
+
+    The returned value is only a severity in [0, 1]. Callers decide whether to
+    apply it to scores. This keeps the default ranking behavior unchanged.
+    """
+    try:
+        value = float(overwide_proxy)
+    except (TypeError, ValueError):
+        return 0.0
+    if not np.isfinite(value):
+        return 0.0
+
+    try:
+        threshold_value = float(threshold)
+    except (TypeError, ValueError):
+        threshold_value = 0.55
+    if not np.isfinite(threshold_value):
+        threshold_value = 0.55
+    thr = float(np.clip(threshold_value, 0.0, 0.99))
+    if value <= thr:
+        return 0.0
+    return float(np.clip((value - thr) / max(1.0 - thr, 1e-6), 0.0, 1.0))
+
+
+def apply_pocket_overwide_penalty(
+    score: Any,
+    overwide_proxy: Any,
+    penalty_weight: float = 0.0,
+    threshold: float = 0.55,
+) -> tuple[float, float, float]:
+    """Apply optional pocket-overwide penalty to a score.
+
+    Returns:
+    - adjusted score
+    - normalized penalty severity
+    - sanitized penalty weight
+    """
+    try:
+        base = float(score)
+    except (TypeError, ValueError):
+        base = float("nan")
+    if not np.isfinite(base):
+        base = 0.0
+
+    try:
+        weight_value = float(penalty_weight)
+    except (TypeError, ValueError):
+        weight_value = 0.0
+    if not np.isfinite(weight_value):
+        weight_value = 0.0
+    weight = float(np.clip(weight_value, 0.0, 1.0))
+    penalty = compute_pocket_overwide_penalty(overwide_proxy, threshold=threshold)
+    adjusted = float(np.clip(base - weight * penalty, 0.0, 1.0))
+    return adjusted, penalty, weight
+
+
 def compute_consistency_score(
     conformer_group: pd.DataFrame,
     weights: Mapping[str, float] | None = None,
@@ -124,6 +184,8 @@ def build_blocking_explanation(
     ligand_path_bottleneck = float(row.get("mean_topk_ligand_path_bottleneck_score", np.nan))
     ligand_path_exit_block = float(row.get("mean_topk_ligand_path_exit_block_fraction", np.nan))
     ligand_path_clearance = float(row.get("mean_topk_ligand_path_min_clearance", np.nan))
+    pocket_shape_overwide = float(row.get("mean_topk_pocket_shape_overwide_proxy", np.nan))
+    pocket_shape_count = float(row.get("mean_topk_pocket_shape_residue_count", np.nan))
     consistency = float(row.get("pocket_consistency_score", np.nan))
     std_score = float(row.get("std_conformer_score", np.nan))
     best_conf = float(row.get("best_conformer_score", np.nan))
@@ -169,6 +231,12 @@ def build_blocking_explanation(
     if np.isfinite(best_conf) and best_conf >= 0.82:
         reasons.append("存在高置信最佳构象")
 
+    if np.isfinite(pocket_shape_overwide) and pocket_shape_overwide >= 0.55:
+        if np.isfinite(pocket_shape_count):
+            reasons.insert(0, f"pocket 定义偏宽，平均约 {pocket_shape_count:.1f} 个残基，建议复核口袋边界")
+        else:
+            reasons.insert(0, "pocket 定义偏宽，建议复核口袋边界")
+
     if not reasons:
         reasons.append(str(fallback_reason))
 
@@ -180,6 +248,8 @@ __all__ = [
     "CONSISTENCY_WEIGHTS",
     "to_numeric",
     "safe_mean_if_exists",
+    "compute_pocket_overwide_penalty",
+    "apply_pocket_overwide_penalty",
     "compute_weighted_scaled_mean",
     "compute_consistency_score",
     "build_blocking_explanation",

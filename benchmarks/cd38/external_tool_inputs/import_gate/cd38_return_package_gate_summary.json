@@ -1,0 +1,49 @@
+{
+  "gate_status": "FAIL_INPUT_PACKAGE",
+  "decision_message": "The source looks like the original transfer/input package, not a completed return package.",
+  "recommended_actions": [
+    "Run P2Rank/fpocket on the transfer package first.",
+    "Return `p2rank_outputs/` and `fpocket_runs/*/*_out/`, then dry-run again."
+  ],
+  "import_summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_summary.json",
+  "scan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_scan.csv",
+  "action_plan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.csv",
+  "source": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer\\cd38_external_tool_inputs_transfer.zip",
+  "source_diagnosis": "input_package_without_external_outputs",
+  "candidate_file_count": 0,
+  "imported_count": 0,
+  "dry_run_count": 0,
+  "coverage": {
+    "expected_output_count": 6,
+    "ready_expected_output_count": 0,
+    "missing_expected_output_count": 6,
+    "unexpected_output_count": 0,
+    "ready_expected_outputs": [],
+    "missing_expected_outputs": [
+      "3ROP:p2rank",
+      "3ROP:fpocket",
+      "4OGW:p2rank",
+      "4OGW:fpocket",
+      "3F6Y:p2rank",
+      "3F6Y:fpocket"
+    ],
+    "unexpected_outputs": []
+  },
+  "synthetic_fixture_detected": false,
+  "action_plan_context": {
+    "action_plan_rows": 6,
+    "benchmark_gap_rows": 4,
+    "benchmark_gap_rows_still_missing": 4,
+    "benchmark_gap_missing_keys": [
+      "3ROP:fpocket",
+      "4OGW:fpocket",
+      "3F6Y:fpocket",
+      "3F6Y:p2rank"
+    ]
+  },
+  "outputs": {
+    "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\import_gate\\cd38_return_package_gate_summary.json",
+    "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\import_gate\\cd38_return_package_gate_report.md",
+    "decision_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\import_gate\\cd38_return_package_gate_decision.csv"
+  }
+}

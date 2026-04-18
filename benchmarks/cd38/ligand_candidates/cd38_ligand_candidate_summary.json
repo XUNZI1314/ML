@@ -1,0 +1,18 @@
+{
+  "structure_targets_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_structure_targets.csv",
+  "truth_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_active_site_truth.txt",
+  "inputs_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\inputs",
+  "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\ligand_candidates",
+  "distance_threshold": 4.5,
+  "structure_count": 3,
+  "candidate_count": 608,
+  "recommended_count": 3,
+  "recommended_by_pdb": {
+    "3ROP": 2,
+    "4OGW": 1
+  },
+  "structures_without_recommended_ligand": [
+    "3F6Y"
+  ],
+  "errors": []
+}

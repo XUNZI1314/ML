@@ -1,0 +1,6 @@
+method,residue_key,in_truth
+ligand_contact,A:124,False
+p2rank,A:129,False
+p2rank,A:155,True
+p2rank,A:156,False
+ligand_contact,A:196,False

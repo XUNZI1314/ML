@@ -1,0 +1,465 @@
+{
+  "package_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+  "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize",
+  "import_source": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer\\cd38_external_tool_inputs_transfer.zip",
+  "import_overwrite": false,
+  "import_dry_run": false,
+  "import_gate_enabled": true,
+  "import_gate_skipped": false,
+  "import_gate_strict": true,
+  "import_gate_status": "FAIL_INPUT_PACKAGE",
+  "import_blocked_by_gate": true,
+  "import_gate_summary": {
+    "gate_status": "FAIL_INPUT_PACKAGE",
+    "decision_message": "The source looks like the original transfer/input package, not a completed return package.",
+    "recommended_actions": [
+      "Run P2Rank/fpocket on the transfer package first.",
+      "Return `p2rank_outputs/` and `fpocket_runs/*/*_out/`, then dry-run again."
+    ],
+    "import_summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_summary.json",
+    "scan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_scan.csv",
+    "action_plan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.csv",
+    "source": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer\\cd38_external_tool_inputs_transfer.zip",
+    "source_diagnosis": "input_package_without_external_outputs",
+    "candidate_file_count": 0,
+    "imported_count": 0,
+    "dry_run_count": 0,
+    "coverage": {
+      "expected_output_count": 6,
+      "ready_expected_output_count": 0,
+      "missing_expected_output_count": 6,
+      "unexpected_output_count": 0,
+      "ready_expected_outputs": [],
+      "missing_expected_outputs": [
+        "3ROP:p2rank",
+        "3ROP:fpocket",
+        "4OGW:p2rank",
+        "4OGW:fpocket",
+        "3F6Y:p2rank",
+        "3F6Y:fpocket"
+      ],
+      "unexpected_outputs": []
+    },
+    "synthetic_fixture_detected": false,
+    "action_plan_context": {
+      "action_plan_rows": 6,
+      "benchmark_gap_rows": 4,
+      "benchmark_gap_rows_still_missing": 4,
+      "benchmark_gap_missing_keys": [
+        "3ROP:fpocket",
+        "4OGW:fpocket",
+        "3F6Y:fpocket",
+        "3F6Y:p2rank"
+      ]
+    },
+    "outputs": {
+      "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\cd38_return_package_gate_summary.json",
+      "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\cd38_return_package_gate_report.md",
+      "decision_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\cd38_return_package_gate_decision.csv"
+    }
+  },
+  "run_discovered": false,
+  "run_sensitivity": false,
+  "external_manifest_row_count": 0,
+  "benchmark_import_attempted": false,
+  "benchmark_followup_status": "not_requested",
+  "p2rank_outputs_ready": false,
+  "fpocket_outputs_ready": false,
+  "import_summary": {
+    "source": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer\\cd38_external_tool_inputs_transfer.zip",
+    "source_type": "zip",
+    "source_file_count": 19,
+    "source_top_level_entries": [
+      "external_tool_inputs"
+    ],
+    "source_diagnosis": "input_package_without_external_outputs",
+    "diagnostic_message": "This looks like the original external-tool input package, not a completed return package. Run P2Rank/fpocket first, then return p2rank_outputs/ and fpocket_runs/*/*_out/.",
+    "package_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+    "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run",
+    "dry_run": true,
+    "overwrite": false,
+    "scanned_file_count": 19,
+    "candidate_file_count": 0,
+    "ignored_file_count": 19,
+    "imported_count": 0,
+    "dry_run_count": 0,
+    "skipped_existing_count": 0,
+    "status_counts": {},
+    "role_counts": {},
+    "scan_status_counts": {
+      "ignored": 19
+    },
+    "ignored_reason_counts": {
+      "too_shallow": 13,
+      "fpocket_runs_without_out_dir": 3,
+      "not_p2rank_or_fpocket_output": 3
+    },
+    "coverage": {
+      "expected_output_count": 6,
+      "ready_expected_output_count": 0,
+      "missing_expected_output_count": 6,
+      "unexpected_output_count": 0,
+      "ready_expected_outputs": [],
+      "missing_expected_outputs": [
+        "3ROP:p2rank",
+        "3ROP:fpocket",
+        "4OGW:p2rank",
+        "4OGW:fpocket",
+        "3F6Y:p2rank",
+        "3F6Y:fpocket"
+      ],
+      "unexpected_outputs": []
+    },
+    "missing_repair_action_count": 6,
+    "manifest_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_manifest.csv",
+    "scan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_scan.csv",
+    "coverage_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_coverage.csv",
+    "repair_plan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_repair_plan.csv",
+    "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_summary.json",
+    "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_report.md"
+  },
+  "preflight_summary": {
+    "package_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+    "manifest_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_input_manifest.csv",
+    "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\preflight",
+    "path_resolution": "package_portable_first",
+    "manifest_row_count": 3,
+    "pdb_input_ready_count": 3,
+    "p2rank_ready_count": 0,
+    "p2rank_missing_output_count": 3,
+    "fpocket_ready_count": 0,
+    "fpocket_missing_output_count": 3,
+    "tools": {
+      "p2rank": {
+        "command": "prank",
+        "available": false,
+        "path": ""
+      },
+      "fpocket": {
+        "command": "fpocket",
+        "available": false,
+        "path": ""
+      }
+    },
+    "next_actions": [
+      "P2Rank command is not available on PATH; install P2Rank or run run_p2rank_templates.ps1 on another machine, then copy outputs back.",
+      "fpocket command is not available on PATH; install fpocket or run run_fpocket_templates.ps1 on another machine, then copy outputs back.",
+      "After external tools finish, run benchmarks/cd38/external_tool_inputs/refresh_readiness_after_external_tools.ps1."
+    ]
+  },
+  "readiness_summary": {
+    "structure_targets_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_structure_targets.csv",
+    "manifest_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_benchmark_manifest.csv",
+    "results_root": "D:\\minimal_ML_test\\benchmarks\\cd38\\results",
+    "truth_file": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_active_site_truth.txt",
+    "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness",
+    "run_discovered": false,
+    "ligand_candidates": {
+      "tool": "ligand_candidates",
+      "status": "ready",
+      "structure_count": 3,
+      "candidate_count": 608,
+      "recommended_count": 3,
+      "structures_without_recommended_ligand": [
+        "3F6Y"
+      ]
+    },
+    "expansion_plan": {
+      "tool": "expansion_plan",
+      "status": "ready",
+      "target_structure_count": 3,
+      "target_method_count": 8,
+      "missing_or_pending_count": 4,
+      "status_counts": {
+        "complete": 4,
+        "needs_fpocket_output": 3,
+        "needs_p2rank_output": 1
+      }
+    },
+    "p2rank": {
+      "tool": "p2rank",
+      "status": "needs_external_output",
+      "roots": [
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\p2rank_outputs"
+      ],
+      "discovered_prediction_file_count": 0,
+      "manifest_row_count": 0,
+      "skipped_count": 0,
+      "recommended_next_action": "No P2Rank prediction files were found; run P2Rank externally and rerun discovery."
+    },
+    "fpocket": {
+      "tool": "fpocket",
+      "status": "needs_external_output",
+      "roots": [
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\fpocket_runs"
+      ],
+      "discovered_pocket_file_count": 0,
+      "manifest_row_count": 0,
+      "skipped_count": 0,
+      "recommended_next_action": "No fpocket pocket*_atm.pdb files were found; place real fpocket outputs under the scanned root and rerun discovery."
+    },
+    "commands": [
+      {
+        "command": [
+          "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+          "inspect_cd38_ligand_candidates.py",
+          "--structure_targets_csv",
+          "benchmarks/cd38/cd38_structure_targets.csv",
+          "--truth_file",
+          "benchmarks/cd38/cd38_active_site_truth.txt",
+          "--out_dir",
+          "benchmarks\\cd38\\ligand_candidates",
+          "--distance_threshold",
+          "4.5"
+        ],
+        "returncode": 0,
+        "status": "success",
+        "tool": "ligand_candidates",
+        "summary_path": "benchmarks\\cd38\\ligand_candidates\\cd38_ligand_candidate_summary.json"
+      },
+      {
+        "command": [
+          "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+          "build_cd38_benchmark_expansion_plan.py",
+          "--structure_targets_csv",
+          "benchmarks/cd38/cd38_structure_targets.csv",
+          "--manifest_csv",
+          "benchmarks/cd38/cd38_benchmark_manifest.csv",
+          "--results_root",
+          "benchmarks/cd38/results",
+          "--out_dir",
+          "benchmarks\\cd38\\expansion_plan",
+          "--near_threshold",
+          "4.5"
+        ],
+        "returncode": 0,
+        "status": "success",
+        "tool": "expansion_plan",
+        "summary_path": "benchmarks\\cd38\\expansion_plan\\cd38_benchmark_expansion_summary.json"
+      },
+      {
+        "command": [
+          "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+          "prepare_cd38_p2rank_panel.py",
+          "--p2rank_root",
+          "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\p2rank_outputs",
+          "--manifest_out",
+          "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv",
+          "--summary_json",
+          "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.summary.json",
+          "--report_md",
+          "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.report.md",
+          "--results_root",
+          "benchmarks/cd38/results",
+          "--truth_file",
+          "benchmarks/cd38/cd38_active_site_truth.txt",
+          "--chain_filter",
+          "A",
+          "--near_threshold",
+          "4.5",
+          "--rank_by_pdb",
+          "3ROP=2,4OGW=1"
+        ],
+        "returncode": 0,
+        "status": "success",
+        "tool": "p2rank",
+        "summary_path": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.summary.json"
+      },
+      {
+        "command": [
+          "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+          "prepare_cd38_fpocket_panel.py",
+          "--fpocket_root",
+          "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\fpocket_runs",
+          "--manifest_out",
+          "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv",
+          "--summary_json",
+          "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv.summary.json",
+          "--report_md",
+          "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv.report.md",
+          "--results_root",
+          "benchmarks/cd38/results",
+          "--truth_file",
+          "benchmarks/cd38/cd38_active_site_truth.txt",
+          "--chain_filter",
+          "A",
+          "--near_threshold",
+          "4.5"
+        ],
+        "returncode": 0,
+        "status": "success",
+        "tool": "fpocket",
+        "summary_path": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv.summary.json"
+      }
+    ],
+    "outputs": {
+      "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\cd38_benchmark_readiness_summary.json",
+      "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\cd38_benchmark_readiness_report.md",
+      "commands_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\cd38_benchmark_readiness_commands.json",
+      "expansion_missing_actions_csv": "benchmarks\\cd38\\expansion_plan\\cd38_benchmark_missing_actions.csv",
+      "ligand_candidate_report_md": "benchmarks\\cd38\\ligand_candidates\\cd38_ligand_candidate_report.md",
+      "p2rank_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\p2rank_discovered_manifest.csv.report.md",
+      "fpocket_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\fpocket_discovered_manifest.csv.report.md"
+    },
+    "next_actions": [
+      "Check P2Rank readiness report; no runnable P2Rank manifest rows were created.",
+      "Check fpocket readiness report; no runnable fpocket manifest rows were created."
+    ]
+  },
+  "action_plan_summary": {
+    "overall_status": "blocked_external_outputs_missing",
+    "action_count": 6,
+    "benchmark_gap_action_count": 4,
+    "package_reproducibility_action_count": 2,
+    "ready_action_count": 0,
+    "missing_benchmark_gap_action_count": 4,
+    "status_counts": {
+      "missing_output_dir": 3,
+      "missing_output": 3
+    },
+    "p2rank_tool_available": false,
+    "fpocket_tool_available": false,
+    "p2rank_missing_output_count": 3,
+    "fpocket_missing_output_count": 3,
+    "readiness_missing_or_pending_count": 4,
+    "package_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+    "benchmark_gaps_only": false,
+    "inputs": {
+      "expansion_missing_actions_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\expansion_plan\\cd38_benchmark_missing_actions.csv",
+      "expected_returns_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\cd38_external_tool_expected_returns.csv",
+      "preflight_status_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\preflight\\cd38_external_tool_preflight_status.csv",
+      "preflight_summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\preflight\\cd38_external_tool_preflight_summary.json",
+      "readiness_summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\cd38_benchmark_readiness_summary.json",
+      "import_coverage_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\imported_outputs\\cd38_external_tool_output_import_coverage.csv",
+      "import_repair_plan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\imported_outputs\\cd38_external_tool_output_import_repair_plan.csv"
+    },
+    "outputs": {
+      "action_plan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.csv",
+      "action_plan_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.json",
+      "action_plan_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.md"
+    }
+  },
+  "steps": [
+    {
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "import_cd38_external_tool_outputs.py",
+        "--source",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer\\cd38_external_tool_inputs_transfer.zip",
+        "--package_dir",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+        "--out_dir",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run",
+        "--dry_run"
+      ],
+      "returncode": 0,
+      "status": "success",
+      "step": "preimport_gate_dry_run"
+    },
+    {
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "build_cd38_return_package_gate.py",
+        "--import_summary_json",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_summary.json",
+        "--scan_csv",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_scan.csv",
+        "--out_dir",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate"
+      ],
+      "returncode": 0,
+      "status": "success",
+      "step": "preimport_return_package_gate"
+    },
+    {
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "import_cd38_external_tool_outputs.py",
+        "--source",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_transfer\\cd38_external_tool_inputs_transfer.zip",
+        "--package_dir",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+        "--out_dir",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\imported_outputs"
+      ],
+      "returncode": "",
+      "status": "skipped",
+      "step": "import_outputs",
+      "reason": "blocked_by_import_gate:FAIL_INPUT_PACKAGE"
+    },
+    {
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "check_cd38_external_tool_environment.py",
+        "--package_dir",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs",
+        "--out_dir",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\preflight"
+      ],
+      "returncode": 0,
+      "status": "success",
+      "step": "preflight"
+    },
+    {
+      "command": [
+        "C:\\Users\\ACD\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+        "refresh_cd38_benchmark_readiness.py",
+        "--p2rank_root",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\p2rank_outputs",
+        "--fpocket_root",
+        "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\fpocket_runs",
+        "--chain_filter",
+        "A",
+        "--near_threshold",
+        "4.5",
+        "--rank_by_pdb",
+        "3ROP=2,4OGW=1"
+      ],
+      "returncode": 0,
+      "status": "success",
+      "step": "readiness"
+    },
+    {
+      "command": [],
+      "returncode": "",
+      "status": "skipped",
+      "step": "external_benchmark_action_plan",
+      "reason": "skipped_child_step_failed"
+    }
+  ],
+  "outputs": {
+    "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\cd38_external_benchmark_finalize_summary.json",
+    "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\cd38_external_benchmark_finalize_report.md",
+    "import_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\imported_outputs\\cd38_external_tool_output_import_report.md",
+    "import_scan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\imported_outputs\\cd38_external_tool_output_import_scan.csv",
+    "import_coverage_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\imported_outputs\\cd38_external_tool_output_import_coverage.csv",
+    "import_repair_plan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\imported_outputs\\cd38_external_tool_output_import_repair_plan.csv",
+    "import_gate_summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\cd38_return_package_gate_summary.json",
+    "import_gate_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\cd38_return_package_gate_report.md",
+    "import_gate_decision_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\cd38_return_package_gate_decision.csv",
+    "preimport_gate_dry_run_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_report.md",
+    "preflight_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\preflight\\cd38_external_tool_preflight_report.md",
+    "readiness_report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\readiness\\cd38_benchmark_readiness_report.md",
+    "action_plan_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.md",
+    "action_plan_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.csv",
+    "action_plan_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.json",
+    "benchmark_panel_md": "benchmarks/cd38/results/cd38_benchmark_panel.md",
+    "parameter_sensitivity_report_md": "benchmarks/cd38/parameter_sensitivity/cd38_pocket_parameter_sensitivity_report.md",
+    "proxy_calibration_report_md": "benchmarks/cd38/proxy_calibration/cd38_proxy_calibration_report.md",
+    "proxy_calibration_summary_json": "benchmarks/cd38/proxy_calibration/cd38_proxy_calibration_summary.json"
+  },
+  "next_actions": [
+    "Import was blocked by return-package gate: FAIL_INPUT_PACKAGE. The source looks like the original transfer/input package, not a completed return package.",
+    "Run a dry-run import and review the gate report before attempting finalize again.",
+    "Import source diagnosis: input_package_without_external_outputs. This looks like the original external-tool input package, not a completed return package. Run P2Rank/fpocket first, then return p2rank_outputs/ and fpocket_runs/*/*_out/.",
+    "Missing expected external outputs in returned source: 3ROP:p2rank, 3ROP:fpocket, 4OGW:p2rank, 4OGW:fpocket, 3F6Y:p2rank, 3F6Y:fpocket.",
+    "Open the repair plan CSV for exact missing paths and run templates: D:\\minimal_ML_test\\benchmarks\\cd38\\external_tool_inputs\\finalize\\import_gate\\preimport_dry_run\\cd38_external_tool_output_import_repair_plan.csv.",
+    "Open the import scan CSV to inspect ignored files and confirm whether p2rank_outputs/ or fpocket_runs/*/*_out/ are present.",
+    "External outputs are still missing; run or adapt run_p2rank_templates.ps1 / run_fpocket_templates.ps1 on a machine with the tools installed.",
+    "Open the consolidated external benchmark action plan for exact PDB-method priorities: D:\\minimal_ML_test\\benchmarks\\cd38\\action_plan\\cd38_external_benchmark_action_plan.md.",
+    "After outputs are copied back, rerun this finalize script.",
+    "Action plan still has 4 missing benchmark-completion rows.",
+    "Check P2Rank readiness report; no runnable P2Rank manifest rows were created.",
+    "Check fpocket readiness report; no runnable fpocket manifest rows were created."
+  ]
+}

@@ -1,0 +1,171 @@
+{
+  "generated_at": "2026-04-18 08:58:03",
+  "panel_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\cd38_benchmark_panel.csv",
+  "sensitivity_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\parameter_sensitivity",
+  "benchmark_row_count": 4,
+  "pdb_count": 2,
+  "method_count": 2,
+  "fpocket_row_count": 0,
+  "truth_risk_count": 1,
+  "valid_proxy_count": 4,
+  "thresholds": {
+    "runtime_proxy_threshold": 0.55,
+    "truth_overwide_threshold": 0.55,
+    "coverage_threshold": 0.8,
+    "low_precision_threshold": 0.35,
+    "min_structures_for_default_penalty": 5
+  },
+  "recommendation": {
+    "evidence_level": "low",
+    "recommended_runtime_proxy_threshold": 0.55,
+    "recommended_default_penalty_weight": 0.0,
+    "optional_experimental_penalty_weight": 0.15,
+    "recommended_policy": "keep_default_penalty_off",
+    "best_empirical_threshold": 0.25,
+    "best_empirical_threshold_score": {
+      "balanced_accuracy": 1.0,
+      "f1": 1.0,
+      "sensitivity": 1.0,
+      "specificity": 1.0
+    },
+    "reason": "Current benchmark is useful for direction, but not large/diverse enough to change defaults.",
+    "blockers": [
+      "benchmark structures are too few (2 < 5)",
+      "truth risk/non-risk split is too small (1/3)",
+      "no real fpocket rows and fewer than three method families are present"
+    ],
+    "next_actions": [
+      "Add real fpocket outputs for 3ROP/4OGW/3F6Y and rerun finalize_cd38_external_benchmark.py --run_discovered --run_sensitivity.",
+      "Add at least one non-CD38 benchmark protein before changing global ranking defaults.",
+      "Keep --pocket_overwide_penalty_weight at 0.0 by default; use 0.15 only for sensitivity review runs."
+    ]
+  },
+  "top_threshold_candidates": [
+    {
+      "threshold": 0.25,
+      "tp": 1,
+      "tn": 3,
+      "fp": 0,
+      "fn": 0,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "precision": 1.0,
+      "accuracy": 1.0,
+      "balanced_accuracy": 1.0,
+      "f1": 1.0
+    },
+    {
+      "threshold": 0.3,
+      "tp": 1,
+      "tn": 3,
+      "fp": 0,
+      "fn": 0,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "precision": 1.0,
+      "accuracy": 1.0,
+      "balanced_accuracy": 1.0,
+      "f1": 1.0
+    },
+    {
+      "threshold": 0.35,
+      "tp": 1,
+      "tn": 3,
+      "fp": 0,
+      "fn": 0,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "precision": 1.0,
+      "accuracy": 1.0,
+      "balanced_accuracy": 1.0,
+      "f1": 1.0
+    },
+    {
+      "threshold": 0.4,
+      "tp": 1,
+      "tn": 3,
+      "fp": 0,
+      "fn": 0,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "precision": 1.0,
+      "accuracy": 1.0,
+      "balanced_accuracy": 1.0,
+      "f1": 1.0
+    },
+    {
+      "threshold": 0.45,
+      "tp": 1,
+      "tn": 3,
+      "fp": 0,
+      "fn": 0,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "precision": 1.0,
+      "accuracy": 1.0,
+      "balanced_accuracy": 1.0,
+      "f1": 1.0
+    }
+  ],
+  "method_summary": [
+    {
+      "method": "ligand_contact",
+      "row_count": 2,
+      "pdb_count": 2,
+      "mean_coverage": 0.9285714285714286,
+      "mean_precision": 0.4807692307692307,
+      "mean_truth_overwide": 0.30805860805860796,
+      "mean_runtime_proxy": 0.20177014355913173,
+      "truth_risk_count": 0,
+      "runtime_proxy_flag_count": 0
+    },
+    {
+      "method": "p2rank",
+      "row_count": 2,
+      "pdb_count": 2,
+      "mean_coverage": 1.0,
+      "mean_precision": 0.3846153846153846,
+      "mean_truth_overwide": 0.45457875457875463,
+      "mean_runtime_proxy": 0.4063821332749731,
+      "truth_risk_count": 1,
+      "runtime_proxy_flag_count": 1
+    }
+  ],
+  "penalty_summary": [
+    {
+      "overwide_penalty_weight": 0.0,
+      "scenario_count": 30,
+      "mean_overwide_risk": 0.7190371416332955,
+      "paired_scenario_count": 26,
+      "mean_utility_score": 0.4684290993906378,
+      "mean_adjusted_utility_score": 0.4684290993906378,
+      "min_adjusted_utility_score": 0.0
+    },
+    {
+      "overwide_penalty_weight": 0.15,
+      "scenario_count": 30,
+      "mean_overwide_risk": 0.7190371416332955,
+      "paired_scenario_count": 26,
+      "mean_utility_score": 0.4684290993906378,
+      "mean_adjusted_utility_score": 0.4082823897968129,
+      "min_adjusted_utility_score": 0.0
+    },
+    {
+      "overwide_penalty_weight": 0.3,
+      "scenario_count": 30,
+      "mean_overwide_risk": 0.7190371416332955,
+      "paired_scenario_count": 26,
+      "mean_utility_score": 0.4684290993906378,
+      "mean_adjusted_utility_score": 0.35719457003110844,
+      "min_adjusted_utility_score": 0.0
+    }
+  ],
+  "outputs": {
+    "summary_json": "D:\\minimal_ML_test\\benchmarks\\cd38\\proxy_calibration\\cd38_proxy_calibration_summary.json",
+    "report_md": "D:\\minimal_ML_test\\benchmarks\\cd38\\proxy_calibration\\cd38_proxy_calibration_report.md",
+    "calibration_rows_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\proxy_calibration\\cd38_proxy_calibration_rows.csv",
+    "threshold_candidates_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\proxy_calibration\\cd38_proxy_threshold_candidates.csv",
+    "method_summary_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\proxy_calibration\\cd38_proxy_method_summary.csv",
+    "penalty_summary_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\proxy_calibration\\cd38_proxy_penalty_summary.csv"
+  }
+}

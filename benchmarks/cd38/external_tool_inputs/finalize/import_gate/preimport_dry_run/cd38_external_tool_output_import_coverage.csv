@@ -1,0 +1,7 @@
+pdb_id,method,expected,status,candidate_count,matched_relative_paths,notes
+3ROP,p2rank,true,missing_from_return,0,,
+3ROP,fpocket,true,missing_from_return,0,,
+4OGW,p2rank,true,missing_from_return,0,,
+4OGW,fpocket,true,missing_from_return,0,,
+3F6Y,p2rank,true,missing_from_return,0,,
+3F6Y,fpocket,true,missing_from_return,0,,

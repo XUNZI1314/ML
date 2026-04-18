@@ -1,0 +1,29 @@
+{
+  "pdb_path": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\4OGW_ligand_contact_chainA_NMN\\inputs\\4OGW.pdb",
+  "protein_chain": "A",
+  "ligand_chain": "A",
+  "ligand_resnames": [
+    "NMN"
+  ],
+  "ligand_resseqs": [],
+  "distance_threshold": 4.5,
+  "include_neighbor_shell": 0.0,
+  "ligand_residue_count": 1,
+  "predicted_pocket_residue_count": 14,
+  "predicted_residue_keys": [
+    "A:124",
+    "A:125",
+    "A:126",
+    "A:127",
+    "A:129",
+    "A:145",
+    "A:146",
+    "A:155",
+    "A:189",
+    "A:193",
+    "A:220",
+    "A:221",
+    "A:222",
+    "A:226"
+  ]
+}

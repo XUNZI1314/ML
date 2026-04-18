@@ -1,0 +1,102 @@
+{
+  "structure_targets_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_structure_targets.csv",
+  "manifest_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\cd38_benchmark_manifest.csv",
+  "results_root": "D:\\minimal_ML_test\\benchmarks\\cd38\\results",
+  "panel_csv": "D:\\minimal_ML_test\\benchmarks\\cd38\\results\\cd38_benchmark_panel.csv",
+  "out_dir": "D:\\minimal_ML_test\\benchmarks\\cd38\\expansion_plan",
+  "target_structure_count": 3,
+  "target_method_count": 8,
+  "missing_or_pending_count": 4,
+  "complete_structures": [
+    "3ROP",
+    "4OGW"
+  ],
+  "status_counts": {
+    "complete": 4,
+    "needs_fpocket_output": 3,
+    "needs_p2rank_output": 1
+  },
+  "method_counts": {
+    "fpocket": 3,
+    "ligand_contact": 2,
+    "p2rank": 3
+  },
+  "next_missing_actions": [
+    {
+      "pdb_id": "3ROP",
+      "method": "fpocket",
+      "status": "needs_fpocket_output",
+      "priority": "1",
+      "protein_chain": "A",
+      "ligand_chain": "A",
+      "ligand_resnames": "50A,NCA",
+      "ligand_resseqs": "",
+      "manifest_row_count": 0,
+      "result_count": 0,
+      "manifest_result_names": "",
+      "result_names": "",
+      "p2rank_predictions_csv": "benchmarks/cd38/results/3ROP_p2rank_rank2_chainA/source_predictions.csv",
+      "fpocket_root": "",
+      "recommended_action": "Run fpocket externally and fill fpocket_root, then generate a discovered manifest.",
+      "recommended_command": "python prepare_cd38_fpocket_panel.py --fpocket_root your_fpocket_outputs\\3ROP_out --rcsb_pdb_id 3ROP --chain_filter A --results_root benchmarks\\cd38\\results --near_threshold 4.5 --manifest_out benchmarks\\cd38\\fpocket_3ROP_manifest.csv",
+      "notes": "Current ligand-contact and P2Rank baseline; real fpocket output still needed."
+    },
+    {
+      "pdb_id": "4OGW",
+      "method": "fpocket",
+      "status": "needs_fpocket_output",
+      "priority": "1",
+      "protein_chain": "A",
+      "ligand_chain": "A",
+      "ligand_resnames": "NMN",
+      "ligand_resseqs": "",
+      "manifest_row_count": 0,
+      "result_count": 0,
+      "manifest_result_names": "",
+      "result_names": "",
+      "p2rank_predictions_csv": "benchmarks/cd38/results/4OGW_p2rank_rank1_chainA/source_predictions.csv",
+      "fpocket_root": "",
+      "recommended_action": "Run fpocket externally and fill fpocket_root, then generate a discovered manifest.",
+      "recommended_command": "python prepare_cd38_fpocket_panel.py --fpocket_root your_fpocket_outputs\\4OGW_out --rcsb_pdb_id 4OGW --chain_filter A --results_root benchmarks\\cd38\\results --near_threshold 4.5 --manifest_out benchmarks\\cd38\\fpocket_4OGW_manifest.csv",
+      "notes": "Current mutant ligand-contact and P2Rank baseline; real fpocket output still needed."
+    },
+    {
+      "pdb_id": "3F6Y",
+      "method": "p2rank",
+      "status": "needs_p2rank_output",
+      "priority": "2",
+      "protein_chain": "A",
+      "ligand_chain": "",
+      "ligand_resnames": "",
+      "ligand_resseqs": "",
+      "manifest_row_count": 0,
+      "result_count": 0,
+      "manifest_result_names": "",
+      "result_names": "",
+      "p2rank_predictions_csv": "",
+      "fpocket_root": "",
+      "recommended_action": "Run P2Rank externally, then generate a discovered manifest from its predictions.csv output.",
+      "recommended_command": "python prepare_cd38_p2rank_panel.py --p2rank_root your_p2rank_outputs\\3F6Y --rcsb_pdb_id 3F6Y --chain_filter A --results_root benchmarks\\cd38\\results --near_threshold 4.5 --manifest_out benchmarks\\cd38\\p2rank_3F6Y_manifest.csv",
+      "notes": "Apo-like CD38 structure for pocket-finder testing; ligand scan found no active-site ligand candidate, so ligand-contact baseline is skipped."
+    },
+    {
+      "pdb_id": "3F6Y",
+      "method": "fpocket",
+      "status": "needs_fpocket_output",
+      "priority": "2",
+      "protein_chain": "A",
+      "ligand_chain": "",
+      "ligand_resnames": "",
+      "ligand_resseqs": "",
+      "manifest_row_count": 0,
+      "result_count": 0,
+      "manifest_result_names": "",
+      "result_names": "",
+      "p2rank_predictions_csv": "",
+      "fpocket_root": "",
+      "recommended_action": "Run fpocket externally and fill fpocket_root, then generate a discovered manifest.",
+      "recommended_command": "python prepare_cd38_fpocket_panel.py --fpocket_root your_fpocket_outputs\\3F6Y_out --rcsb_pdb_id 3F6Y --chain_filter A --results_root benchmarks\\cd38\\results --near_threshold 4.5 --manifest_out benchmarks\\cd38\\fpocket_3F6Y_manifest.csv",
+      "notes": "Apo-like CD38 structure for pocket-finder testing; ligand scan found no active-site ligand candidate, so ligand-contact baseline is skipped."
+    }
+  ]
+}

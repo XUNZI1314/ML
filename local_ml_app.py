@@ -20,17 +20,60 @@ import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 
 from app_metadata import APP_NAME, APP_RELEASE_CHANNEL, APP_VERSION
+from build_candidate_comparisons import build_candidate_comparison_outputs
+from build_experiment_state_ledger import build_global_experiment_ledger
+from build_experiment_validation_report import build_experiment_validation_feedback
+from build_result_archive import build_result_archive
+from build_validation_retrain_comparison import build_validation_retrain_comparison
+from demo_data_utils import (
+    build_demo_experiment_override,
+    make_synthetic_pose_features,
+    write_demo_manifest,
+)
+from demo_report_utils import write_demo_interpretation, write_demo_overview_html, write_demo_readme
+from input_path_repair import (
+    AUTO_REPAIR_CONFIDENCE_THRESHOLD,
+    analyze_input_path_repair_dataframe,
+    apply_input_path_repair_plan,
+)
+from real_data_starter_utils import write_real_data_starter_kit
+from run_cd38_public_starter import run_cd38_public_starter
+from runtime_dependency_utils import (
+    check_runtime_dependencies,
+    format_missing_dependency_summary,
+    get_pipeline_runtime_dependency_specs,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent
 LOCAL_APP_RUN_ROOT = REPO_ROOT / "local_app_runs"
 COMPARE_EXPORT_ROOT = LOCAL_APP_RUN_ROOT / "compare_exports"
 PARAM_TEMPLATE_ROOT = LOCAL_APP_RUN_ROOT / "parameter_templates"
+GENERATED_INPUT_ROOT = LOCAL_APP_RUN_ROOT / "_generated_inputs"
+DEMO_INPUT_ROOT = LOCAL_APP_RUN_ROOT / "_demo_inputs"
+CD38_BENCHMARK_ROOT = REPO_ROOT / "benchmarks" / "cd38"
+CD38_EXTERNAL_INPUT_ROOT = CD38_BENCHMARK_ROOT / "external_tool_inputs"
+CD38_TRANSFER_ROOT = CD38_BENCHMARK_ROOT / "external_tool_transfer"
+CD38_TRANSFER_ZIP_PATH = CD38_TRANSFER_ROOT / "cd38_external_tool_inputs_transfer.zip"
+CD38_FINALIZE_ROOT = CD38_EXTERNAL_INPUT_ROOT / "finalize"
+CD38_IMPORT_ROOT = CD38_EXTERNAL_INPUT_ROOT / "imported_outputs"
+CD38_IMPORT_GATE_ROOT = CD38_EXTERNAL_INPUT_ROOT / "import_gate"
+CD38_NEXT_RUN_REPORT_PATH = CD38_EXTERNAL_INPUT_ROOT / "cd38_external_tool_next_run.md"
+CD38_NEXT_RUN_PLAN_PATH = CD38_EXTERNAL_INPUT_ROOT / "cd38_external_tool_next_run_plan.csv"
+CD38_NEXT_RUN_PS1_PATH = CD38_EXTERNAL_INPUT_ROOT / "run_cd38_external_next_benchmark.ps1"
+CD38_NEXT_RUN_SH_PATH = CD38_EXTERNAL_INPUT_ROOT / "run_cd38_external_next_benchmark.sh"
+CD38_RETURN_SELFTEST_ROOT = REPO_ROOT / "smoke_test_outputs" / "cd38_return_import_selftest"
+CD38_WORKFLOW_SELFTEST_ROOT = REPO_ROOT / "smoke_test_outputs" / "cd38_external_workflow_selftest"
+CD38_PUBLIC_STARTER_ROOT = CD38_BENCHMARK_ROOT / "public_starter"
+CD38_PUBLIC_STARTER_SUMMARY_PATH = CD38_PUBLIC_STARTER_ROOT / "cd38_public_starter_summary.json"
+CD38_PUBLIC_STARTER_REPORT_PATH = CD38_PUBLIC_STARTER_ROOT / "cd38_public_starter_report.md"
 APP_RUN_METADATA_NAME = "app_run_metadata.json"
 APP_STDOUT_NAME = "app_stdout.log"
 APP_STDERR_NAME = "app_stderr.log"
 LOCAL_APP_RUN_ROOT.mkdir(parents=True, exist_ok=True)
 COMPARE_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
 PARAM_TEMPLATE_ROOT.mkdir(parents=True, exist_ok=True)
+GENERATED_INPUT_ROOT.mkdir(parents=True, exist_ok=True)
+DEMO_INPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 PDF_PAGE_WIDTH = 1240
 PDF_PAGE_HEIGHT = 1754
@@ -88,6 +131,7 @@ INPUT_CSV_OPTIONAL_HINT_COLUMNS = [
 ]
 FEATURE_CSV_OPTIONAL_HINT_COLUMNS = [
     "label",
+    "experiment_label",
     "pred_prob",
     "pocket_hit_fraction",
     "catalytic_hit_fraction",
@@ -100,9 +144,20 @@ BUNDLE_DETECTION_RULES: list[tuple[str, list[str], str | None, set[str] | None]]
     ("default_pocket_local_path", [], "pocket", None),
     ("default_catalytic_local_path", [], "catalytic", None),
     ("default_ligand_local_path", [], "ligand", None),
+    ("experiment_plan_override_local_path", ["experiment_plan_override.csv", "experiment_plan_overrides.csv"], "experiment", {".csv"}),
 ]
 BUNDLE_IMPORT_ROOT = LOCAL_APP_RUN_ROOT / "_bundle_imports"
 BUNDLE_IMPORT_ROOT.mkdir(parents=True, exist_ok=True)
+AUTO_INPUT_PDB_SUFFIXES = {".pdb"}
+AUTO_INPUT_EXCLUDE_NAME_TOKENS = {
+    "pocket",
+    "fpocket",
+    "ligand",
+    "substrate",
+    "catalytic",
+    "template",
+    "predicted",
+}
 
 
 def _slugify_name(value: str) -> str:
@@ -123,9 +178,13 @@ FORM_DEFAULTS: dict[str, Any] = {
     "default_pocket_local_path": "",
     "default_catalytic_local_path": "",
     "default_ligand_local_path": "",
+    "experiment_plan_override_local_path": "",
     "default_antigen_chain": "",
     "default_nanobody_chain": "",
+    "label_col": "label",
     "top_k": 3,
+    "pocket_overwide_penalty_weight": 0.0,
+    "pocket_overwide_threshold": 0.55,
     "train_epochs": 20,
     "train_batch_size": 64,
     "train_val_ratio": 0.25,
@@ -133,6 +192,10 @@ FORM_DEFAULTS: dict[str, Any] = {
     "seed": 42,
     "skip_failed_rows": True,
     "disable_label_aware_steps": False,
+    "enable_ai_assistant": False,
+    "ai_provider": "none",
+    "ai_model": "",
+    "ai_max_rows": 8,
     "template_name": "default",
     "selected_template_name": "",
     "selected_history_label": "",
@@ -146,9 +209,13 @@ FORM_FIELD_KEYS = [
     "default_pocket_local_path",
     "default_catalytic_local_path",
     "default_ligand_local_path",
+    "experiment_plan_override_local_path",
     "default_antigen_chain",
     "default_nanobody_chain",
+    "label_col",
     "top_k",
+    "pocket_overwide_penalty_weight",
+    "pocket_overwide_threshold",
     "train_epochs",
     "train_batch_size",
     "train_val_ratio",
@@ -156,6 +223,10 @@ FORM_FIELD_KEYS = [
     "seed",
     "skip_failed_rows",
     "disable_label_aware_steps",
+    "enable_ai_assistant",
+    "ai_provider",
+    "ai_model",
+    "ai_max_rows",
 ]
 
 
@@ -211,6 +282,345 @@ def _build_sample_feature_csv_text() -> str:
     return df.to_csv(index=False)
 
 
+def _build_sample_experiment_plan_override_csv_text() -> str:
+    df = pd.DataFrame(
+        [
+            {
+                "nanobody_id": "NB001",
+                "plan_override": "include",
+                "experiment_status": "pending",
+                "experiment_result": "",
+                "validation_label": "",
+                "experiment_owner": "lab_member_A",
+                "experiment_cost": 1,
+                "experiment_note": "priority candidate",
+            },
+            {
+                "nanobody_id": "NB002",
+                "plan_override": "exclude",
+                "experiment_status": "blocked",
+                "experiment_result": "",
+                "validation_label": "",
+                "experiment_owner": "",
+                "experiment_cost": "",
+                "experiment_note": "material unavailable",
+            },
+        ]
+    )
+    return df.to_csv(index=False)
+
+
+def _generate_local_demo_inputs() -> dict[str, Any]:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    demo_dir = DEMO_INPUT_ROOT / f"demo_{stamp}"
+    demo_dir.mkdir(parents=True, exist_ok=True)
+
+    feature_csv = demo_dir / "demo_pose_features.csv"
+    override_csv = demo_dir / "demo_experiment_plan_override.csv"
+    manifest_json = demo_dir / "demo_manifest.json"
+
+    feature_summary = make_synthetic_pose_features(
+        out_csv=feature_csv,
+        n_nanobodies=8,
+        n_conformers=2,
+        n_poses=4,
+        seed=20260418,
+    )
+    override_summary = build_demo_experiment_override(
+        feature_csv=feature_csv,
+        out_csv=override_csv,
+    )
+    manifest = write_demo_manifest(
+        out_json=manifest_json,
+        feature_summary=feature_summary,
+        override_summary=override_summary,
+    )
+
+    return {
+        "demo_dir": str(demo_dir),
+        "feature_csv": str(feature_csv),
+        "override_csv": str(override_csv),
+        "manifest_json": str(manifest_json),
+        "manifest": manifest,
+    }
+
+
+def _apply_demo_inputs_to_session_state(demo_payload: dict[str, Any], *, action_message: str) -> None:
+    demo_feature_csv = str(demo_payload.get("feature_csv") or "")
+    demo_override_csv = str(demo_payload.get("override_csv") or "")
+    demo_dir = str(demo_payload.get("demo_dir") or "")
+    st.session_state["start_mode"] = "feature_csv"
+    st.session_state["feature_csv_local_path"] = demo_feature_csv
+    st.session_state["experiment_plan_override_local_path"] = demo_override_csv
+    st.session_state["label_col"] = "label"
+    st.session_state["run_name"] = f"demo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    st.session_state["train_epochs"] = min(int(st.session_state.get("train_epochs") or 3), 3)
+    st.session_state["train_early_stopping_patience"] = min(
+        int(st.session_state.get("train_early_stopping_patience") or 2),
+        2,
+    )
+    st.session_state["disable_label_aware_steps"] = False
+    st.session_state["last_scheduler_message"] = action_message.format(demo_dir=demo_dir)
+
+
+def _load_demo_inputs_into_session_state() -> None:
+    try:
+        demo_payload = _generate_local_demo_inputs()
+        _apply_demo_inputs_to_session_state(
+            demo_payload,
+            action_message="已生成并载入 demo 输入: {demo_dir}。确认后点击“立即运行”。",
+        )
+    except Exception as exc:
+        st.session_state["last_scheduler_message"] = f"生成 demo 输入失败: {exc}"
+
+
+def _run_demo_now_from_session_state() -> None:
+    if isinstance(st.session_state.get("active_run_info"), dict):
+        st.session_state["last_scheduler_message"] = "当前已有任务在运行，不能同时启动 demo。"
+        return
+
+    try:
+        demo_payload = _generate_local_demo_inputs()
+        _apply_demo_inputs_to_session_state(
+            demo_payload,
+            action_message="已生成 demo 输入并启动运行: {demo_dir}。",
+        )
+        run_request = _prepare_run_request_from_form(
+            input_csv_upload=None,
+            feature_csv_upload=None,
+            default_pocket_upload=None,
+            default_catalytic_upload=None,
+            default_ligand_upload=None,
+            experiment_plan_override_upload=None,
+        )
+        st.session_state["queue_auto_run"] = False
+        _start_background_run(run_request, queue_source="demo_run")
+    except Exception as exc:
+        st.session_state["last_scheduler_message"] = f"启动 demo 运行失败: {exc}"
+
+
+def _detect_demo_source_dir(form_payload: dict[str, Any]) -> Path | None:
+    feature_path_text = str(form_payload.get("feature_csv_local_path") or "").strip()
+    if not feature_path_text:
+        return None
+    try:
+        feature_path = Path(feature_path_text).expanduser().resolve()
+        demo_root = DEMO_INPUT_ROOT.resolve()
+        if feature_path.is_relative_to(demo_root):
+            return feature_path.parent
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return None
+
+
+def _prepare_local_demo_run_files(
+    *,
+    form_payload: dict[str, Any],
+    input_dir: Path,
+    out_dir: Path,
+    resolved_inputs: dict[str, Any],
+) -> dict[str, Any] | None:
+    demo_source_dir = _detect_demo_source_dir(form_payload)
+    if demo_source_dir is None:
+        return None
+
+    source_manifest = demo_source_dir / "demo_manifest.json"
+    copied_manifest: Path | None = None
+    if source_manifest.exists():
+        copied_manifest = input_dir / "demo_manifest.json"
+        shutil.copy2(source_manifest, copied_manifest)
+
+    demo_readme = out_dir / "DEMO_README.md"
+    demo_interpretation = out_dir / "DEMO_INTERPRETATION.md"
+    demo_overview = out_dir / "DEMO_OVERVIEW.html"
+    real_data_starter_dir = out_dir / "REAL_DATA_STARTER"
+    starter_manifest = write_real_data_starter_kit(real_data_starter_dir)
+    write_demo_interpretation(
+        out_path=demo_interpretation,
+        feature_csv=str(resolved_inputs.get("feature_csv") or ""),
+        override_csv=str(resolved_inputs.get("experiment_plan_override_csv") or ""),
+        manifest_json=str(copied_manifest or source_manifest if source_manifest.exists() else ""),
+        real_data_starter_dir=real_data_starter_dir,
+        summary=None,
+    )
+    write_demo_overview_html(
+        out_path=demo_overview,
+        feature_csv=str(resolved_inputs.get("feature_csv") or ""),
+        override_csv=str(resolved_inputs.get("experiment_plan_override_csv") or ""),
+        manifest_json=str(copied_manifest or source_manifest if source_manifest.exists() else ""),
+        readme_md=demo_readme,
+        interpretation_md=demo_interpretation,
+        real_data_starter_dir=real_data_starter_dir,
+        summary=None,
+    )
+    write_demo_readme(
+        out_path=demo_readme,
+        feature_csv=str(resolved_inputs.get("feature_csv") or ""),
+        override_csv=str(resolved_inputs.get("experiment_plan_override_csv") or ""),
+        overview_html=demo_overview,
+        interpretation_md=demo_interpretation,
+        manifest_json=str(copied_manifest or source_manifest if source_manifest.exists() else ""),
+        real_data_starter_dir=real_data_starter_dir,
+        summary=None,
+    )
+    return {
+        "demo_source_dir": str(demo_source_dir),
+        "demo_manifest_json": str(copied_manifest or source_manifest if source_manifest.exists() else ""),
+        "demo_readme_md": str(demo_readme),
+        "demo_interpretation_md": str(demo_interpretation),
+        "demo_overview_html": str(demo_overview),
+        "real_data_starter_dir": str(real_data_starter_dir),
+        "real_data_starter_readme_md": str(starter_manifest.get("outputs", {}).get("readme_md") or ""),
+        "real_data_starter_manifest_json": str(starter_manifest.get("outputs", {}).get("manifest_json") or ""),
+        "mini_pdb_example_readme_md": str(starter_manifest.get("outputs", {}).get("mini_pdb_example_readme_md") or ""),
+        "mini_pdb_example_input_csv": str(starter_manifest.get("outputs", {}).get("mini_pdb_example_input_csv") or ""),
+        "synthetic_demo": True,
+    }
+
+
+def _refresh_local_demo_run_files(
+    *,
+    metadata: dict[str, Any],
+    summary: dict[str, Any] | None,
+    out_dir: Path,
+) -> dict[str, Any] | None:
+    demo_mode = metadata.get("demo_mode") if isinstance(metadata.get("demo_mode"), dict) else None
+    if not isinstance(demo_mode, dict) or not bool(demo_mode.get("synthetic_demo")):
+        return None
+
+    resolved_inputs = metadata.get("resolved_inputs") if isinstance(metadata.get("resolved_inputs"), dict) else {}
+    feature_csv = str(resolved_inputs.get("feature_csv") or "")
+    override_csv = str(resolved_inputs.get("experiment_plan_override_csv") or "")
+    manifest_json = str(demo_mode.get("demo_manifest_json") or "")
+    demo_readme = out_dir / "DEMO_README.md"
+    demo_interpretation = out_dir / "DEMO_INTERPRETATION.md"
+    demo_overview = out_dir / "DEMO_OVERVIEW.html"
+    real_data_starter_dir = out_dir / "REAL_DATA_STARTER"
+    starter_manifest = write_real_data_starter_kit(real_data_starter_dir)
+
+    write_demo_interpretation(
+        out_path=demo_interpretation,
+        feature_csv=feature_csv,
+        override_csv=override_csv,
+        manifest_json=manifest_json,
+        real_data_starter_dir=real_data_starter_dir,
+        summary=summary,
+    )
+    write_demo_overview_html(
+        out_path=demo_overview,
+        feature_csv=feature_csv,
+        override_csv=override_csv,
+        manifest_json=manifest_json,
+        readme_md=demo_readme,
+        interpretation_md=demo_interpretation,
+        real_data_starter_dir=real_data_starter_dir,
+        summary=summary,
+    )
+    write_demo_readme(
+        out_path=demo_readme,
+        feature_csv=feature_csv,
+        override_csv=override_csv,
+        manifest_json=manifest_json,
+        overview_html=demo_overview,
+        interpretation_md=demo_interpretation,
+        real_data_starter_dir=real_data_starter_dir,
+        summary=summary,
+    )
+    return {
+        "demo_readme_md": str(demo_readme),
+        "demo_interpretation_md": str(demo_interpretation),
+        "demo_overview_html": str(demo_overview),
+        "real_data_starter_dir": str(real_data_starter_dir),
+        "real_data_starter_readme_md": str(starter_manifest.get("outputs", {}).get("readme_md") or ""),
+        "real_data_starter_manifest_json": str(starter_manifest.get("outputs", {}).get("manifest_json") or ""),
+        "mini_pdb_example_readme_md": str(starter_manifest.get("outputs", {}).get("mini_pdb_example_readme_md") or ""),
+        "mini_pdb_example_input_csv": str(starter_manifest.get("outputs", {}).get("mini_pdb_example_input_csv") or ""),
+    }
+
+
+PLAN_OVERRIDE_COLUMNS = [
+    "nanobody_id",
+    "plan_override",
+    "experiment_status",
+    "experiment_result",
+    "validation_label",
+    "experiment_owner",
+    "experiment_cost",
+    "experiment_note",
+    "manual_plan_reason",
+]
+PLAN_OVERRIDE_ACTION_OPTIONS = ["", "include", "exclude", "standby", "defer"]
+PLAN_STATUS_OPTIONS = ["", "planned", "pending", "in_progress", "completed", "blocked", "failed", "cancelled"]
+PLAN_RESULT_OPTIONS = ["", "positive", "negative", "inconclusive"]
+PLAN_LABEL_OPTIONS = ["", "1", "0"]
+
+
+def _clean_plan_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    if text.lower() in {"nan", "none", "null", "na", "n/a"}:
+        return ""
+    return text
+
+
+def _normalize_editor_plan_override(value: Any) -> str:
+    text = _clean_plan_cell(value).lower().replace("-", "_").replace(" ", "_")
+    if text in {"include", "include_now", "force_include", "lock", "locked", "must_include"}:
+        return "include"
+    if text in {"exclude", "force_exclude", "skip", "remove", "reject", "blocked", "do_not_test"}:
+        return "exclude"
+    if text in {"standby", "backup", "reserve", "waitlist", "wait_list"}:
+        return "standby"
+    if text in {"defer", "later", "later_round", "postpone", "hold"}:
+        return "defer"
+    return ""
+
+
+def _build_experiment_plan_override_editor_df(plan_df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for _, row in plan_df.iterrows():
+        manual_action = _normalize_editor_plan_override(row.get("manual_plan_action"))
+        status = _clean_plan_cell(row.get("experiment_status"))
+        if not status and _clean_plan_cell(row.get("plan_decision")) == "include_now":
+            status = "planned"
+        rows.append(
+            {
+                "nanobody_id": _clean_plan_cell(row.get("nanobody_id")),
+                "plan_override": manual_action,
+                "experiment_status": status,
+                "experiment_result": _clean_plan_cell(row.get("experiment_result")),
+                "validation_label": _clean_plan_cell(row.get("validation_label")),
+                "experiment_owner": _clean_plan_cell(row.get("experiment_owner")),
+                "experiment_cost": _clean_plan_cell(row.get("experiment_cost")),
+                "experiment_note": _clean_plan_cell(row.get("experiment_note")),
+                "manual_plan_reason": _clean_plan_cell(row.get("manual_plan_reason")),
+            }
+        )
+    editor_df = pd.DataFrame(rows, columns=PLAN_OVERRIDE_COLUMNS)
+    return editor_df.drop_duplicates(subset=["nanobody_id"], keep="first").reset_index(drop=True)
+
+
+def _sanitize_plan_override_editor_df(editor_df: pd.DataFrame) -> pd.DataFrame:
+    if editor_df.empty:
+        return pd.DataFrame(columns=PLAN_OVERRIDE_COLUMNS)
+    cleaned = editor_df.copy()
+    for col in PLAN_OVERRIDE_COLUMNS:
+        if col not in cleaned.columns:
+            cleaned[col] = ""
+    cleaned = cleaned[PLAN_OVERRIDE_COLUMNS].copy()
+    for col in PLAN_OVERRIDE_COLUMNS:
+        cleaned[col] = cleaned[col].map(_clean_plan_cell)
+    cleaned["plan_override"] = cleaned["plan_override"].map(_normalize_editor_plan_override)
+    cleaned = cleaned[cleaned["nanobody_id"].astype(str).str.strip().ne("")]
+    return cleaned.reset_index(drop=True)
+
+
 def _load_page_icon() -> Image.Image | str:
     icon_path = REPO_ROOT / "assets" / "app_icon.png"
     if icon_path.exists():
@@ -264,9 +674,13 @@ def _build_pipeline_command(
     default_pocket_file: Path | None,
     default_catalytic_file: Path | None,
     default_ligand_file: Path | None,
+    experiment_plan_override_file: Path | None,
     default_antigen_chain: str,
     default_nanobody_chain: str,
+    label_col: str,
     top_k: int,
+    pocket_overwide_penalty_weight: float,
+    pocket_overwide_threshold: float,
     train_epochs: int,
     train_batch_size: int,
     train_val_ratio: float,
@@ -274,6 +688,10 @@ def _build_pipeline_command(
     seed: int,
     skip_failed_rows: bool,
     disable_label_aware_steps: bool,
+    enable_ai_assistant: bool,
+    ai_provider: str,
+    ai_model: str,
+    ai_max_rows: int,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -282,6 +700,10 @@ def _build_pipeline_command(
         str(out_dir),
         "--top_k",
         str(int(top_k)),
+        "--pocket_overwide_penalty_weight",
+        str(float(pocket_overwide_penalty_weight)),
+        "--pocket_overwide_threshold",
+        str(float(pocket_overwide_threshold)),
         "--train_epochs",
         str(int(train_epochs)),
         "--train_batch_size",
@@ -292,6 +714,8 @@ def _build_pipeline_command(
         str(int(train_early_stopping_patience)),
         "--seed",
         str(int(seed)),
+        "--label_col",
+        str(label_col or "label"),
     ]
     if start_mode == "input_csv":
         if input_csv is None:
@@ -308,6 +732,8 @@ def _build_pipeline_command(
         command.extend(["--default_catalytic_file", str(default_catalytic_file)])
     if default_ligand_file is not None:
         command.extend(["--default_ligand_file", str(default_ligand_file)])
+    if experiment_plan_override_file is not None:
+        command.extend(["--experiment_plan_override_csv", str(experiment_plan_override_file)])
 
     antigen_chain = str(default_antigen_chain or "").strip()
     if antigen_chain:
@@ -321,6 +747,13 @@ def _build_pipeline_command(
         command.append("--skip_failed_rows")
     if disable_label_aware_steps:
         command.append("--disable_label_aware_steps")
+    if enable_ai_assistant:
+        command.append("--enable_ai_assistant")
+        command.extend(["--ai_provider", str(ai_provider or "none")])
+        command.extend(["--ai_max_rows", str(int(ai_max_rows))])
+        model_text = str(ai_model or "").strip()
+        if model_text:
+            command.extend(["--ai_model", model_text])
 
     return command
 
@@ -334,25 +767,35 @@ def _build_pipeline_kwargs(
     default_pocket_file: Path | None,
     default_catalytic_file: Path | None,
     default_ligand_file: Path | None,
+    experiment_plan_override_file: Path | None,
 ) -> dict[str, Any]:
     return {
         "input_csv": None if input_csv is None else str(input_csv),
         "feature_csv": None if feature_csv is None else str(feature_csv),
         "out_dir": str(out_dir),
-        "label_col": "label",
+        "label_col": str(form_payload.get("label_col") or "label"),
         "disable_label_aware_steps": bool(form_payload.get("disable_label_aware_steps", False)),
         "default_pocket_file": None if default_pocket_file is None else str(default_pocket_file),
         "default_catalytic_file": None if default_catalytic_file is None else str(default_catalytic_file),
         "default_ligand_file": None if default_ligand_file is None else str(default_ligand_file),
+        "experiment_plan_override_csv": None
+        if experiment_plan_override_file is None
+        else str(experiment_plan_override_file),
         "default_antigen_chain": str(form_payload.get("default_antigen_chain") or ""),
         "default_nanobody_chain": str(form_payload.get("default_nanobody_chain") or ""),
         "skip_failed_rows": bool(form_payload.get("skip_failed_rows", True)),
         "top_k": int(form_payload.get("top_k", 3)),
+        "pocket_overwide_penalty_weight": float(form_payload.get("pocket_overwide_penalty_weight", 0.0)),
+        "pocket_overwide_threshold": float(form_payload.get("pocket_overwide_threshold", 0.55)),
         "train_epochs": int(form_payload.get("train_epochs", 20)),
         "train_batch_size": int(form_payload.get("train_batch_size", 64)),
         "train_val_ratio": float(form_payload.get("train_val_ratio", 0.25)),
         "train_early_stopping_patience": int(form_payload.get("train_early_stopping_patience", 8)),
         "seed": int(form_payload.get("seed", 42)),
+        "enable_ai_assistant": bool(form_payload.get("enable_ai_assistant", False)),
+        "ai_provider": str(form_payload.get("ai_provider") or "none"),
+        "ai_model": str(form_payload.get("ai_model") or "").strip() or None,
+        "ai_max_rows": int(form_payload.get("ai_max_rows", 8)),
     }
 
 
@@ -497,8 +940,10 @@ def _prepare_run_request_from_form(
     default_pocket_upload: Any,
     default_catalytic_upload: Any,
     default_ligand_upload: Any,
+    experiment_plan_override_upload: Any,
 ) -> dict[str, Any]:
     form_payload = _build_form_payload()
+    _ensure_runtime_dependencies_ready(str(form_payload.get("start_mode") or "input_csv"))
     safe_run_name, run_root = _allocate_run_identity(str(form_payload.get("run_name", "")))
     input_dir = run_root / "inputs"
     out_dir = run_root / "outputs"
@@ -540,6 +985,13 @@ def _prepare_run_request_from_form(
         required=False,
         label="default_ligand_file",
     )
+    experiment_plan_override_file = _resolve_input_file(
+        uploaded_file=experiment_plan_override_upload,
+        local_path_text=str(form_payload.get("experiment_plan_override_local_path") or ""),
+        dst_dir=input_dir,
+        required=False,
+        label="experiment_plan_override_csv",
+    )
 
     resolved_inputs = {
         "input_csv": None if input_csv is None else str(input_csv),
@@ -547,7 +999,16 @@ def _prepare_run_request_from_form(
         "default_pocket_file": None if default_pocket_file is None else str(default_pocket_file),
         "default_catalytic_file": None if default_catalytic_file is None else str(default_catalytic_file),
         "default_ligand_file": None if default_ligand_file is None else str(default_ligand_file),
+        "experiment_plan_override_csv": None
+        if experiment_plan_override_file is None
+        else str(experiment_plan_override_file),
     }
+    demo_metadata = _prepare_local_demo_run_files(
+        form_payload=form_payload,
+        input_dir=input_dir,
+        out_dir=out_dir,
+        resolved_inputs=resolved_inputs,
+    )
 
     command = _build_pipeline_command(
         start_mode=str(form_payload.get("start_mode")),
@@ -557,9 +1018,13 @@ def _prepare_run_request_from_form(
         default_pocket_file=default_pocket_file,
         default_catalytic_file=default_catalytic_file,
         default_ligand_file=default_ligand_file,
+        experiment_plan_override_file=experiment_plan_override_file,
         default_antigen_chain=str(form_payload.get("default_antigen_chain") or ""),
         default_nanobody_chain=str(form_payload.get("default_nanobody_chain") or ""),
+        label_col=str(form_payload.get("label_col") or "label"),
         top_k=int(form_payload.get("top_k", 3)),
+        pocket_overwide_penalty_weight=float(form_payload.get("pocket_overwide_penalty_weight", 0.0)),
+        pocket_overwide_threshold=float(form_payload.get("pocket_overwide_threshold", 0.55)),
         train_epochs=int(form_payload.get("train_epochs", 20)),
         train_batch_size=int(form_payload.get("train_batch_size", 64)),
         train_val_ratio=float(form_payload.get("train_val_ratio", 0.25)),
@@ -567,6 +1032,10 @@ def _prepare_run_request_from_form(
         seed=int(form_payload.get("seed", 42)),
         skip_failed_rows=bool(form_payload.get("skip_failed_rows", True)),
         disable_label_aware_steps=bool(form_payload.get("disable_label_aware_steps", False)),
+        enable_ai_assistant=bool(form_payload.get("enable_ai_assistant", False)),
+        ai_provider=str(form_payload.get("ai_provider") or "none"),
+        ai_model=str(form_payload.get("ai_model") or ""),
+        ai_max_rows=int(form_payload.get("ai_max_rows", 8)),
     )
     pipeline_kwargs = _build_pipeline_kwargs(
         form_payload=form_payload,
@@ -576,6 +1045,7 @@ def _prepare_run_request_from_form(
         default_pocket_file=default_pocket_file,
         default_catalytic_file=default_catalytic_file,
         default_ligand_file=default_ligand_file,
+        experiment_plan_override_file=experiment_plan_override_file,
     )
     summary_path = out_dir / "recommended_pipeline_summary.json"
     metadata = {
@@ -586,6 +1056,7 @@ def _prepare_run_request_from_form(
         "start_mode": str(form_payload.get("start_mode")),
         "form_payload": form_payload,
         "resolved_inputs": resolved_inputs,
+        "demo_mode": demo_metadata,
         "command": command,
         "pipeline_kwargs": pipeline_kwargs,
         "returncode": None,
@@ -623,6 +1094,7 @@ def _enqueue_history_run_request(run_root: Path) -> str:
         default_pocket_upload=None,
         default_catalytic_upload=None,
         default_ligand_upload=None,
+        experiment_plan_override_upload=None,
     )
     queue = st.session_state.get("run_queue")
     if not isinstance(queue, list):
@@ -680,6 +1152,16 @@ def _finalize_background_run(
     stdout_text = _read_text(run_root / APP_STDOUT_NAME)
     stderr_text = _read_text(run_root / APP_STDERR_NAME)
     summary = _load_json(summary_path)
+    metadata = _read_run_metadata(run_root)
+    demo_outputs = _refresh_local_demo_run_files(
+        metadata=metadata,
+        summary=summary,
+        out_dir=out_dir,
+    )
+    if demo_outputs:
+        demo_mode = metadata.get("demo_mode") if isinstance(metadata.get("demo_mode"), dict) else {}
+        demo_mode.update(demo_outputs)
+        metadata["demo_mode"] = demo_mode
 
     if forced_status == "cancelled":
         status = "cancelled"
@@ -709,7 +1191,6 @@ def _finalize_background_run(
             f"Check diagnostics, stderr and output directory: {out_dir}"
         )
 
-    metadata = _read_run_metadata(run_root)
     metadata.update(
         {
             "status": status,
@@ -1240,26 +1721,352 @@ def _count_label_stats(df: pd.DataFrame, label_col: str = "label") -> dict[str, 
     }
 
 
+def _clean_cell_text(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def _unique_non_empty_count(df: pd.DataFrame, column: str) -> int:
+    if column not in df.columns:
+        return 0
+    values = df[column].map(_clean_cell_text)
+    values = values.loc[values.ne("")]
+    return int(values.nunique(dropna=True))
+
+
+def _duplicate_id_summary(df: pd.DataFrame) -> dict[str, int]:
+    id_cols = [col for col in ["nanobody_id", "conformer_id", "pose_id"] if col in df.columns]
+    if len(id_cols) < 3 or df.empty:
+        return {
+            "duplicate_id_key_count": 0,
+            "duplicate_id_row_count": 0,
+        }
+    work = df.loc[:, id_cols].fillna("").astype(str)
+    duplicate_mask = work.duplicated(keep=False)
+    duplicate_keys = work.loc[duplicate_mask].drop_duplicates()
+    return {
+        "duplicate_id_key_count": int(len(duplicate_keys)),
+        "duplicate_id_row_count": int(duplicate_mask.sum()),
+    }
+
+
+def _resolve_reference_path(raw_value: str, base_dir: Path | None) -> Path | None:
+    text = _clean_cell_text(raw_value)
+    if not text:
+        return None
+    path = Path(text).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    if base_dir is None:
+        return None
+    return (base_dir / path).resolve()
+
+
+def _build_default_source_info(
+    *,
+    local_path_text: str,
+    uploaded_file: Any,
+) -> dict[str, Any]:
+    local_path = str(local_path_text or "").strip()
+    if local_path:
+        path = Path(local_path).expanduser().resolve()
+        return {
+            "available": True,
+            "source": "local_path",
+            "path_text": str(path),
+            "exists": bool(path.exists()),
+            "display": str(path),
+        }
+    if uploaded_file is not None:
+        return {
+            "available": True,
+            "source": "uploaded_file",
+            "path_text": "",
+            "exists": True,
+            "display": str(getattr(uploaded_file, "name", "uploaded file")),
+        }
+    return {
+        "available": False,
+        "source": "",
+        "path_text": "",
+        "exists": False,
+        "display": "",
+    }
+
+
+def _summarize_path_column(
+    df: pd.DataFrame,
+    *,
+    column: str,
+    base_dir: Path | None,
+    default_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    default_info = default_info if isinstance(default_info, dict) else {}
+    default_available = bool(default_info.get("available"))
+    default_source = str(default_info.get("source") or "")
+    default_path_text = str(default_info.get("path_text") or "")
+    default_exists = bool(default_info.get("exists"))
+
+    row_value_count = 0
+    covered_by_default_count = 0
+    missing_value_count = 0
+    existing_path_count = 0
+    missing_path_count = 0
+    unchecked_relative_count = 0
+    sample_missing_paths: list[str] = []
+    sample_unchecked_relative_paths: list[str] = []
+
+    if column not in df.columns:
+        missing_value_count = 0 if default_available else int(len(df))
+        covered_by_default_count = int(len(df)) if default_available else 0
+        if default_source == "local_path":
+            if default_exists:
+                existing_path_count = covered_by_default_count
+            else:
+                missing_path_count = covered_by_default_count
+                if default_path_text:
+                    sample_missing_paths.append(default_path_text)
+        return {
+            "column": column,
+            "column_present": False,
+            "total_rows": int(len(df)),
+            "row_value_count": 0,
+            "covered_by_default_count": covered_by_default_count,
+            "missing_value_count": missing_value_count,
+            "existing_path_count": existing_path_count,
+            "missing_path_count": missing_path_count,
+            "unchecked_relative_path_count": unchecked_relative_count,
+            "default_source": default_source,
+            "default_display": str(default_info.get("display") or ""),
+            "sample_missing_paths": sample_missing_paths,
+            "sample_unchecked_relative_paths": sample_unchecked_relative_paths,
+        }
+
+    for raw in df[column].tolist():
+        value = _clean_cell_text(raw)
+        used_default = False
+        if not value and default_available:
+            value = default_path_text
+            used_default = True
+            covered_by_default_count += 1
+
+        if not value:
+            missing_value_count += 1
+            continue
+
+        if not used_default:
+            row_value_count += 1
+
+        path = _resolve_reference_path(value, base_dir)
+        if path is None:
+            unchecked_relative_count += 1
+            if len(sample_unchecked_relative_paths) < 5:
+                sample_unchecked_relative_paths.append(value)
+            continue
+        if path.exists():
+            existing_path_count += 1
+        else:
+            missing_path_count += 1
+            if len(sample_missing_paths) < 5:
+                sample_missing_paths.append(str(path))
+
+    return {
+        "column": column,
+        "column_present": True,
+        "total_rows": int(len(df)),
+        "row_value_count": int(row_value_count),
+        "covered_by_default_count": int(covered_by_default_count),
+        "missing_value_count": int(missing_value_count),
+        "existing_path_count": int(existing_path_count),
+        "missing_path_count": int(missing_path_count),
+        "unchecked_relative_path_count": int(unchecked_relative_count),
+        "default_source": default_source,
+        "default_display": str(default_info.get("display") or ""),
+        "sample_missing_paths": sample_missing_paths,
+        "sample_unchecked_relative_paths": sample_unchecked_relative_paths,
+    }
+
+
+def _build_batch_profile(
+    df: pd.DataFrame,
+    *,
+    mode: str,
+    base_dir: Path | None = None,
+    default_path_info: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    duplicate_summary = _duplicate_id_summary(df)
+    profile: dict[str, Any] = {
+        "mode": mode,
+        "row_count": int(len(df)),
+        "unique_nanobody_count": _unique_non_empty_count(df, "nanobody_id"),
+        "unique_conformer_count": _unique_non_empty_count(df, "conformer_id"),
+        "unique_pose_count": _unique_non_empty_count(df, "pose_id"),
+        **duplicate_summary,
+    }
+
+    if mode == "input_csv":
+        default_path_info = default_path_info or {}
+        profile["unique_pdb_path_count"] = _unique_non_empty_count(df, "pdb_path")
+        profile["path_checks"] = [
+            _summarize_path_column(
+                df,
+                column="pdb_path",
+                base_dir=base_dir,
+                default_info={"available": False},
+            ),
+            _summarize_path_column(
+                df,
+                column="pocket_file",
+                base_dir=base_dir,
+                default_info=default_path_info.get("pocket_file"),
+            ),
+            _summarize_path_column(
+                df,
+                column="catalytic_file",
+                base_dir=base_dir,
+                default_info=default_path_info.get("catalytic_file"),
+            ),
+            _summarize_path_column(
+                df,
+                column="ligand_file",
+                base_dir=base_dir,
+                default_info=default_path_info.get("ligand_file"),
+            ),
+        ]
+    else:
+        numeric_cols = []
+        for col in df.columns:
+            series = pd.to_numeric(df[col], errors="coerce")
+            if int(series.notna().sum()) > 0:
+                numeric_cols.append(str(col))
+        profile["numeric_column_count"] = int(len(numeric_cols))
+        profile["numeric_columns_preview"] = numeric_cols[:12]
+        profile["has_pred_prob"] = bool("pred_prob" in df.columns)
+        profile["has_rule_score"] = bool("final_rule_score" in df.columns or "rule_blocking_score" in df.columns)
+
+    return profile
+
+
+def _build_processing_plan(
+    *,
+    start_mode: str,
+    csv_summary: dict[str, Any],
+    form_payload: dict[str, Any],
+) -> dict[str, Any]:
+    row_count = int(csv_summary.get("row_count") or 0)
+    label_col = str(csv_summary.get("label_col") or form_payload.get("label_col") or "label")
+    label_compare_possible = bool(csv_summary.get("label_compare_possible"))
+    calibration_possible = bool(csv_summary.get("calibration_possible"))
+    disable_label_aware = bool(form_payload.get("disable_label_aware_steps", False))
+
+    stages: list[dict[str, str]] = []
+    if start_mode == "input_csv":
+        stages.append(
+            {
+                "阶段": "build_feature_table",
+                "作用": f"逐行解析 {row_count} 条 pose 输入并生成 pose_features.csv",
+            }
+        )
+    else:
+        stages.append(
+            {
+                "阶段": "build_feature_table",
+                "作用": "跳过；直接使用已提供的 pose_features.csv",
+            }
+        )
+    stages.extend(
+        [
+            {"阶段": "rule_ranker", "作用": "生成规则版 pose/conformer/nanobody 排名"},
+            {"阶段": "train_pose_model", "作用": "训练或拟合 ML pose 模型并输出 pose_predictions.csv"},
+            {"阶段": "rank_nanobodies", "作用": "聚合 ML pose 预测为 nanobody 排名"},
+            {"阶段": "build_consensus_ranking", "作用": "合并 Rule、ML 与 QC 风险，生成共识排名"},
+        ]
+    )
+    if disable_label_aware:
+        label_plan = "用户禁用了 label-aware 步骤；compare/calibration/strategy optimize 不执行。"
+    elif not label_compare_possible:
+        label_plan = f"`{label_col}` 不足或类别不足；compare/calibration/strategy optimize 会自动跳过。"
+    elif calibration_possible:
+        label_plan = f"`{label_col}` 满足要求；将执行 rule-vs-ML compare、calibration 和 strategy optimize。"
+        stages.extend(
+            [
+                {"阶段": "compare_rule_vs_ml", "作用": "对比 Rule 与 ML 排名一致性"},
+                {"阶段": "calibrate_rule_ranker", "作用": f"用 `{label_col}` 自动校准规则权重"},
+                {"阶段": "strategy_optimization", "作用": "生成下一轮校准推荐策略"},
+            ]
+        )
+    else:
+        label_plan = f"`{label_col}` 可用于 compare，但不足 8 条；calibration 会自动跳过。"
+        stages.append({"阶段": "compare_rule_vs_ml", "作用": "对比 Rule 与 ML 排名一致性"})
+
+    return {
+        "start_mode": start_mode,
+        "row_count": row_count,
+        "top_k": int(form_payload.get("top_k", 3) or 3),
+        "skip_failed_rows": bool(form_payload.get("skip_failed_rows", True)),
+        "label_plan": label_plan,
+        "stages": stages,
+        "expected_key_outputs": [
+            "recommended_pipeline_summary.json",
+            "recommended_pipeline_report.md",
+            "rule_outputs/nanobody_rule_ranking.csv",
+            "model_outputs/pose_predictions.csv",
+            "ml_ranking_outputs/nanobody_ranking.csv",
+            "consensus_outputs/consensus_ranking.csv",
+            "parameter_sensitivity/parameter_sensitivity_report.md",
+            "parameter_sensitivity/candidate_rank_sensitivity.csv",
+            "candidate_report_cards/index.html",
+            "candidate_report_cards.zip",
+            "candidate_comparisons/candidate_comparison_report.md",
+            "experiment_suggestions/next_experiment_suggestions.csv",
+        ],
+    }
+
+
 def _summarize_csv_dataframe(
     df: pd.DataFrame,
     *,
     required_columns: list[str],
     optional_columns: list[str] | None = None,
+    mode: str,
+    label_col: str = "label",
+    base_dir: Path | None = None,
+    default_path_info: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     missing_required = [col for col in required_columns if col not in df.columns]
     optional_present = [col for col in (optional_columns or []) if col in df.columns]
     preview_df = df.head(5).copy()
     preview_df.columns = [str(col) for col in preview_df.columns]
-    label_stats = _count_label_stats(df)
+    label_stats = _count_label_stats(df, label_col=label_col)
     return {
         "row_count": int(df.shape[0]),
         "column_count": int(df.shape[1]),
         "columns_preview": [str(col) for col in df.columns[:12].tolist()],
+        "label_col": str(label_col or "label"),
         "missing_required_columns": missing_required,
         "optional_present_columns": optional_present,
         "preview_rows": preview_df.to_dict(orient="records"),
+        "batch_profile": _build_batch_profile(
+            df,
+            mode=mode,
+            base_dir=base_dir,
+            default_path_info=default_path_info,
+        ),
         **label_stats,
     }
+
+
+def _read_local_csv(path: Path) -> pd.DataFrame:
+    try:
+        return pd.read_csv(path, low_memory=False)
+    except UnicodeDecodeError:
+        return pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
 
 
 def _inspect_csv_source(
@@ -1268,18 +2075,25 @@ def _inspect_csv_source(
     local_path_text: str,
     required_columns: list[str],
     optional_columns: list[str] | None = None,
+    mode: str,
+    label_col: str = "label",
+    default_path_info: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     local_path = str(local_path_text or "").strip()
     if local_path:
         path = Path(local_path).expanduser().resolve()
         if not path.exists():
             raise FileNotFoundError(f"路径不存在: {path}")
-        df = pd.read_csv(path, low_memory=False)
+        df = _read_local_csv(path)
         size_text = _format_size_text(path)
         summary = _summarize_csv_dataframe(
             df,
             required_columns=required_columns,
             optional_columns=optional_columns,
+            mode=mode,
+            label_col=label_col,
+            base_dir=path.parent.resolve(),
+            default_path_info=default_path_info,
         )
         summary.update(
             {
@@ -1289,6 +2103,27 @@ def _inspect_csv_source(
                 "size_text": size_text,
             }
         )
+        if mode == "input_csv" and not summary.get("missing_required_columns"):
+            batch_profile = summary.get("batch_profile") if isinstance(summary.get("batch_profile"), dict) else {}
+            path_checks = batch_profile.get("path_checks") if isinstance(batch_profile.get("path_checks"), list) else []
+            needs_path_repair = any(
+                int(item.get("missing_path_count") or 0) > 0
+                or int(item.get("unchecked_relative_path_count") or 0) > 0
+                or (str(item.get("column") or "") == "pdb_path" and int(item.get("missing_value_count") or 0) > 0)
+                for item in path_checks
+                if isinstance(item, dict)
+            )
+            if needs_path_repair:
+                repair_search_roots = [path.parent.resolve()]
+                parent_root = path.parent.parent.resolve()
+                if parent_root != path.parent.resolve() and str(parent_root) != parent_root.anchor:
+                    repair_search_roots.append(parent_root)
+                path_repair = analyze_input_path_repair_dataframe(
+                    df,
+                    base_dir=path.parent.resolve(),
+                    search_roots=repair_search_roots,
+                )
+                summary["path_repair"] = path_repair
         return summary
 
     if uploaded_file is None:
@@ -1300,6 +2135,10 @@ def _inspect_csv_source(
         df,
         required_columns=required_columns,
         optional_columns=optional_columns,
+        mode=mode,
+        label_col=label_col,
+        base_dir=None,
+        default_path_info=default_path_info,
     )
     summary.update(
         {
@@ -1385,6 +2224,96 @@ def _choose_bundle_candidate(
     return candidates[0][-1]
 
 
+def _is_probable_pose_pdb(path: Path) -> bool:
+    if path.suffix.lower() not in AUTO_INPUT_PDB_SUFFIXES:
+        return False
+    name = path.name.lower()
+    if name.endswith("_atm.pdb"):
+        return False
+    return not any(token in name for token in AUTO_INPUT_EXCLUDE_NAME_TOKENS)
+
+
+def _derive_auto_pose_ids(path: Path, index: int) -> dict[str, str]:
+    stem = path.stem.strip()
+    tokens = [tok for tok in re.split(r"[_\-\s]+", stem) if tok]
+    if len(tokens) >= 3:
+        nanobody_id = tokens[0]
+        conformer_id = tokens[1]
+        pose_id = "_".join(tokens[2:])
+    elif len(tokens) == 2:
+        nanobody_id = tokens[0]
+        conformer_id = tokens[1]
+        pose_id = stem
+    elif len(tokens) == 1:
+        nanobody_id = tokens[0]
+        conformer_id = "conf_01"
+        pose_id = stem
+    else:
+        nanobody_id = f"NB{index:03d}"
+        conformer_id = "conf_01"
+        pose_id = f"pose_{index:03d}"
+    return {
+        "nanobody_id": nanobody_id,
+        "conformer_id": conformer_id,
+        "pose_id": pose_id,
+    }
+
+
+def _build_auto_input_table(
+    *,
+    bundle_root: Path,
+    detected_paths: dict[str, str],
+    output_root: Path,
+) -> dict[str, Any] | None:
+    if detected_paths.get("input_csv_local_path") or detected_paths.get("feature_csv_local_path"):
+        return None
+
+    pdb_candidates = sorted(
+        [path for path in bundle_root.rglob("*") if path.is_file() and _is_probable_pose_pdb(path)],
+        key=lambda p: str(p.relative_to(bundle_root)).lower(),
+    )
+    if not pdb_candidates:
+        return None
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    out_csv = output_root / "auto_input_pose_table.csv"
+
+    default_pocket = detected_paths.get("default_pocket_local_path", "")
+    default_catalytic = detected_paths.get("default_catalytic_local_path", "")
+    default_ligand = detected_paths.get("default_ligand_local_path", "")
+
+    rows: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    for index, pdb_path in enumerate(pdb_candidates, start=1):
+        ids = _derive_auto_pose_ids(pdb_path, index)
+        key = (ids["nanobody_id"], ids["conformer_id"], ids["pose_id"])
+        if key in seen_keys:
+            ids["pose_id"] = f"{ids['pose_id']}_{index:03d}"
+            key = (ids["nanobody_id"], ids["conformer_id"], ids["pose_id"])
+        seen_keys.add(key)
+
+        row = {
+            **ids,
+            "pdb_path": str(pdb_path.resolve()),
+            "pocket_file": str(Path(default_pocket).resolve()) if default_pocket else "",
+            "catalytic_file": str(Path(default_catalytic).resolve()) if default_catalytic else "",
+            "ligand_file": str(Path(default_ligand).resolve()) if default_ligand else "",
+        }
+        rows.append(row)
+
+    df = pd.DataFrame(rows, columns=["nanobody_id", "conformer_id", "pose_id", "pdb_path", "pocket_file", "catalytic_file", "ligand_file"])
+    df.to_csv(out_csv, index=False)
+    return {
+        "generated_csv_path": str(out_csv.resolve()),
+        "row_count": int(len(df)),
+        "pose_pdb_count": int(len(pdb_candidates)),
+        "default_pocket_file": default_pocket,
+        "default_catalytic_file": default_catalytic,
+        "default_ligand_file": default_ligand,
+        "preview_rows": df.head(8).to_dict(orient="records"),
+    }
+
+
 def _scan_input_bundle_root(
     *,
     bundle_root: Path,
@@ -1410,6 +2339,15 @@ def _scan_input_bundle_root(
         if detected_path is not None:
             detected_paths[key] = str(detected_path.resolve())
 
+    generated_root = import_root if import_root is not None else GENERATED_INPUT_ROOT / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{_slugify_name(source_name)}"
+    generated_input_table = _build_auto_input_table(
+        bundle_root=bundle_root,
+        detected_paths=detected_paths,
+        output_root=generated_root,
+    )
+    if generated_input_table is not None:
+        detected_paths["input_csv_local_path"] = str(generated_input_table["generated_csv_path"])
+
     bundle_files = sorted([path for path in bundle_root.rglob("*") if path.is_file()])
     preview_items = [
         {"文件": str(path.relative_to(bundle_root))}
@@ -1428,6 +2366,7 @@ def _scan_input_bundle_root(
             for key, value in detected_paths.items()
         ],
         "bundle_preview_items": preview_items,
+        "generated_input_table": generated_input_table,
     }
 
 
@@ -1539,10 +2478,45 @@ def _apply_bundle_import(report: dict[str, Any]) -> str:
     }
     detected_names = [mapped_labels.get(key, key) for key in detected_paths]
     source_kind_text = "目录" if str(report.get("source_kind") or "") == "directory" else "zip 数据包"
+    generated_input_table = (
+        report.get("generated_input_table")
+        if isinstance(report.get("generated_input_table"), dict)
+        else None
+    )
+    generated_text = ""
+    if generated_input_table is not None:
+        generated_text = f"；已自动生成 input_pose_table.csv（{int(generated_input_table.get('row_count') or 0)} 行）"
     return (
         f"已导入{source_kind_text} {report.get('source_name', '')}，自动识别 {len(detected_paths)} 个输入项："
         + ", ".join(detected_names)
+        + generated_text
     )
+
+
+def _build_runtime_dependency_report(start_mode: str) -> dict[str, Any]:
+    return check_runtime_dependencies(
+        get_pipeline_runtime_dependency_specs(start_mode),
+        python_executable=sys.executable,
+    )
+
+
+def _ensure_runtime_dependencies_ready(start_mode: str) -> None:
+    dependency_report = _build_runtime_dependency_report(start_mode)
+    error_message = str(dependency_report.get("error_message") or "").strip()
+    if error_message:
+        raise RuntimeError(f"运行环境依赖预检失败: {error_message}")
+
+    missing_dependencies = (
+        dependency_report.get("missing_dependencies")
+        if isinstance(dependency_report.get("missing_dependencies"), list)
+        else []
+    )
+    if missing_dependencies:
+        summary_text = format_missing_dependency_summary(missing_dependencies)
+        raise RuntimeError(
+            "当前运行环境缺少关键 Python 依赖: "
+            f"{summary_text}。先执行 `pip install -r requirements.txt`，再重新运行。"
+        )
 
 
 def _build_preflight_report(
@@ -1553,10 +2527,27 @@ def _build_preflight_report(
     default_pocket_upload: Any,
     default_catalytic_upload: Any,
     default_ligand_upload: Any,
+    experiment_plan_override_upload: Any,
     form_payload: dict[str, Any],
 ) -> dict[str, Any]:
     status = "ready"
     messages: list[str] = []
+    label_col = str(form_payload.get("label_col") or "label").strip() or "label"
+    dependency_report = _build_runtime_dependency_report(start_mode)
+    default_path_info = {
+        "pocket_file": _build_default_source_info(
+            local_path_text=str(form_payload.get("default_pocket_local_path") or ""),
+            uploaded_file=default_pocket_upload,
+        ),
+        "catalytic_file": _build_default_source_info(
+            local_path_text=str(form_payload.get("default_catalytic_local_path") or ""),
+            uploaded_file=default_catalytic_upload,
+        ),
+        "ligand_file": _build_default_source_info(
+            local_path_text=str(form_payload.get("default_ligand_local_path") or ""),
+            uploaded_file=default_ligand_upload,
+        ),
+    }
 
     optional_file_rows = [
         _build_source_status_row(
@@ -1577,6 +2568,12 @@ def _build_preflight_report(
             local_path_text=str(form_payload.get("default_ligand_local_path") or ""),
             required=False,
         ),
+        _build_source_status_row(
+            label="experiment_plan_override_csv",
+            uploaded_file=experiment_plan_override_upload,
+            local_path_text=str(form_payload.get("experiment_plan_override_local_path") or ""),
+            required=False,
+        ),
     ]
 
     if start_mode == "input_csv":
@@ -1584,7 +2581,10 @@ def _build_preflight_report(
             uploaded_file=input_csv_upload,
             local_path_text=str(form_payload.get("input_csv_local_path") or ""),
             required_columns=INPUT_CSV_REQUIRED_COLUMNS,
-            optional_columns=INPUT_CSV_OPTIONAL_HINT_COLUMNS,
+            optional_columns=list(dict.fromkeys(INPUT_CSV_OPTIONAL_HINT_COLUMNS + [label_col])),
+            mode="input_csv",
+            label_col=label_col,
+            default_path_info=default_path_info,
         )
         missing_required = csv_summary["missing_required_columns"]
         if missing_required:
@@ -1619,12 +2619,54 @@ def _build_preflight_report(
             )
         elif not missing_geometry_hints:
             messages.append("pocket/catalytic/ligand 输入已从 CSV 列或默认文件中至少覆盖一套来源。")
+
+        batch_profile = csv_summary.get("batch_profile") if isinstance(csv_summary.get("batch_profile"), dict) else {}
+        duplicate_rows = int(batch_profile.get("duplicate_id_row_count") or 0)
+        if duplicate_rows > 0 and status != "error":
+            status = "warning"
+            messages.append(f"发现 {duplicate_rows} 行 nanobody/conformer/pose ID 组合重复，建议确认是否为预期重复 pose。")
+
+        path_checks = batch_profile.get("path_checks") if isinstance(batch_profile.get("path_checks"), list) else []
+        for path_check in path_checks:
+            if not isinstance(path_check, dict):
+                continue
+            column = str(path_check.get("column") or "")
+            missing_values = int(path_check.get("missing_value_count") or 0)
+            missing_paths = int(path_check.get("missing_path_count") or 0)
+            unchecked_relative = int(path_check.get("unchecked_relative_path_count") or 0)
+            if column == "pdb_path" and (missing_values > 0 or missing_paths > 0):
+                status = "error"
+                messages.append(
+                    f"pdb_path 有 {missing_values} 行未填写、{missing_paths} 行路径不存在；这些行无法构建结构特征。"
+                )
+            elif column != "pdb_path" and missing_paths > 0 and status != "error":
+                status = "warning"
+                messages.append(f"{column} 有 {missing_paths} 行引用的文件路径不存在，相关几何特征可能为空。")
+            if unchecked_relative > 0 and status != "error":
+                status = "warning"
+                messages.append(
+                    f"{column} 有 {unchecked_relative} 行相对路径暂无法在检查阶段确认；"
+                    "如果这是上传 CSV，请优先使用 zip/目录导入以保留相对路径上下文。"
+                )
+        path_repair = csv_summary.get("path_repair") if isinstance(csv_summary.get("path_repair"), dict) else {}
+        repair_summary = path_repair.get("summary") if isinstance(path_repair.get("summary"), dict) else {}
+        repairable_count = int(repair_summary.get("auto_repair_count") or 0)
+        suggested_count = int(repair_summary.get("suggested_replacement_count") or 0)
+        if repairable_count > 0:
+            messages.append(
+                f"已自动定位到 {repairable_count} 条高可信路径修复建议，可在下方下载修复版 input_csv。"
+            )
+        elif suggested_count > 0 and status != "error":
+            status = "warning"
+            messages.append(f"发现 {suggested_count} 条路径候选建议，但可信度不足，需要人工确认。")
     else:
         csv_summary = _inspect_csv_source(
             uploaded_file=feature_csv_upload,
             local_path_text=str(form_payload.get("feature_csv_local_path") or ""),
             required_columns=FEATURE_CSV_REQUIRED_COLUMNS,
-            optional_columns=FEATURE_CSV_OPTIONAL_HINT_COLUMNS,
+            optional_columns=list(dict.fromkeys(FEATURE_CSV_OPTIONAL_HINT_COLUMNS + [label_col])),
+            mode="feature_csv",
+            label_col=label_col,
         )
         missing_required = csv_summary["missing_required_columns"]
         if missing_required:
@@ -1633,17 +2675,23 @@ def _build_preflight_report(
         else:
             messages.append("pose_features.csv 最小 ID 列完整，可直接进入 rule/ML 排名阶段。")
 
+        batch_profile = csv_summary.get("batch_profile") if isinstance(csv_summary.get("batch_profile"), dict) else {}
+        duplicate_rows = int(batch_profile.get("duplicate_id_row_count") or 0)
+        if duplicate_rows > 0 and status != "error":
+            status = "warning"
+            messages.append(f"发现 {duplicate_rows} 行 nanobody/conformer/pose ID 组合重复，建议确认是否为预期重复 pose。")
+
         if not csv_summary.get("has_label"):
             if status != "error":
                 status = "warning"
-            messages.append("当前没有 label 列，compare/calibration/strategy optimize 会被自动跳过。")
+            messages.append(f"当前没有 `{label_col}` 列，compare/calibration/strategy optimize 会被自动跳过。")
         elif not csv_summary.get("label_compare_possible"):
             if status != "error":
                 status = "warning"
-            messages.append("label 有效样本不足或类别退化，label-aware 步骤会被自动跳过。")
+            messages.append(f"`{label_col}` 有效样本不足或类别退化，label-aware 步骤会被自动跳过。")
         else:
             messages.append(
-                f"检测到 {csv_summary['label_valid_count']} 条有效 label，"
+                f"检测到 {csv_summary['label_valid_count']} 条有效 `{label_col}`，"
                 f"类别数 {csv_summary['label_class_count']}。"
             )
             if csv_summary.get("calibration_possible"):
@@ -1653,14 +2701,65 @@ def _build_preflight_report(
                     status = "warning"
                 messages.append("当前 label 还不足 8 条，compare 可执行，但 calibration 会被自动跳过。")
 
+    dependency_error = str(dependency_report.get("error_message") or "").strip()
+    missing_dependencies = (
+        dependency_report.get("missing_dependencies")
+        if isinstance(dependency_report.get("missing_dependencies"), list)
+        else []
+    )
+    if dependency_error:
+        status = "error"
+        messages.append(f"运行环境依赖预检失败: {dependency_error}")
+    elif missing_dependencies:
+        status = "error"
+        messages.append(
+            "当前运行环境缺少关键 Python 依赖："
+            + format_missing_dependency_summary(missing_dependencies)
+            + "。"
+        )
+        messages.append("建议先执行 `pip install -r requirements.txt`，再重新开始运行或入队。")
+    else:
+        messages.append("当前运行环境已满足本次流程的关键 Python 依赖。")
+
     return {
         "checked_at": _now_text(),
         "start_mode": start_mode,
         "status": status,
         "messages": messages,
         "main_csv": csv_summary,
+        "processing_plan": _build_processing_plan(
+            start_mode=start_mode,
+            csv_summary=csv_summary,
+            form_payload=form_payload,
+        ),
         "optional_files": optional_file_rows,
+        "runtime_dependencies": dependency_report,
     }
+
+
+def _execute_preflight_check(
+    *,
+    start_mode: str,
+    input_csv_upload: Any,
+    feature_csv_upload: Any,
+    default_pocket_upload: Any,
+    default_catalytic_upload: Any,
+    default_ligand_upload: Any,
+    experiment_plan_override_upload: Any,
+    form_payload: dict[str, Any],
+) -> dict[str, Any]:
+    preflight_report = _build_preflight_report(
+        start_mode=start_mode,
+        input_csv_upload=input_csv_upload,
+        feature_csv_upload=feature_csv_upload,
+        default_pocket_upload=default_pocket_upload,
+        default_catalytic_upload=default_catalytic_upload,
+        default_ligand_upload=default_ligand_upload,
+        experiment_plan_override_upload=experiment_plan_override_upload,
+        form_payload=form_payload,
+    )
+    st.session_state["last_preflight"] = preflight_report
+    return preflight_report
 
 
 def _render_preflight_report(report: dict[str, Any] | None) -> None:
@@ -1707,22 +2806,215 @@ def _render_preflight_report(report: dict[str, Any] | None) -> None:
             st.caption("已识别可选列: " + ", ".join(optional_present))
 
         if main_csv.get("has_label"):
+            label_col = str(main_csv.get("label_col") or "label")
             c5, c6, c7 = st.columns(3)
-            c5.metric("有效 label", int(main_csv.get("label_valid_count") or 0))
-            c6.metric("label 类别数", int(main_csv.get("label_class_count") or 0))
+            c5.metric(f"有效 {label_col}", int(main_csv.get("label_valid_count") or 0))
+            c6.metric(f"{label_col} 类别数", int(main_csv.get("label_class_count") or 0))
             c7.metric(
                 "可做 calibration",
                 "是" if bool(main_csv.get("calibration_possible")) else "否",
             )
 
+        batch_profile = main_csv.get("batch_profile") if isinstance(main_csv.get("batch_profile"), dict) else {}
+        if batch_profile:
+            st.subheader("批量数据画像")
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("nanobody 数", int(batch_profile.get("unique_nanobody_count") or 0))
+            p2.metric("conformer 数", int(batch_profile.get("unique_conformer_count") or 0))
+            p3.metric("pose 数", int(batch_profile.get("unique_pose_count") or 0))
+            p4.metric("重复 ID 行", int(batch_profile.get("duplicate_id_row_count") or 0))
+
+            if str(batch_profile.get("mode") or "") == "input_csv":
+                path_checks = batch_profile.get("path_checks") if isinstance(batch_profile.get("path_checks"), list) else []
+                if path_checks:
+                    path_rows: list[dict[str, Any]] = []
+                    for item in path_checks:
+                        if not isinstance(item, dict):
+                            continue
+                        path_rows.append(
+                            {
+                                "字段": item.get("column"),
+                                "CSV列存在": item.get("column_present"),
+                                "行内值": item.get("row_value_count"),
+                                "默认覆盖": item.get("covered_by_default_count"),
+                                "未填写": item.get("missing_value_count"),
+                                "路径存在": item.get("existing_path_count"),
+                                "路径不存在": item.get("missing_path_count"),
+                                "相对路径未确认": item.get("unchecked_relative_path_count"),
+                                "默认来源": item.get("default_source"),
+                            }
+                        )
+                    st.caption("路径检查会按 build_feature_table 的规则解析本地 CSV 相对路径；上传 CSV 中的相对路径需要 zip/目录导入保留上下文。")
+                    st.dataframe(pd.DataFrame(path_rows), use_container_width=True, hide_index=True)
+
+                    sample_rows: list[dict[str, str]] = []
+                    for item in path_checks:
+                        if not isinstance(item, dict):
+                            continue
+                        for path_text in item.get("sample_missing_paths", []) or []:
+                            sample_rows.append({"字段": str(item.get("column") or ""), "类型": "路径不存在", "示例": str(path_text)})
+                        for path_text in item.get("sample_unchecked_relative_paths", []) or []:
+                            sample_rows.append({"字段": str(item.get("column") or ""), "类型": "相对路径未确认", "示例": str(path_text)})
+                    if sample_rows:
+                        with st.expander("查看路径问题示例"):
+                            st.dataframe(pd.DataFrame(sample_rows), use_container_width=True, hide_index=True)
+
+                    path_repair = main_csv.get("path_repair") if isinstance(main_csv.get("path_repair"), dict) else {}
+                    repair_summary = (
+                        path_repair.get("summary")
+                        if isinstance(path_repair.get("summary"), dict)
+                        else {}
+                    )
+                    repair_rows = (
+                        path_repair.get("plan_rows")
+                        if isinstance(path_repair.get("plan_rows"), list)
+                        else []
+                    )
+                    if repair_summary:
+                        st.subheader("缺失路径自动定位建议")
+                        r1, r2, r3, r4 = st.columns(4)
+                        r1.metric("缺失引用", int(repair_summary.get("missing_reference_count") or 0))
+                        r2.metric("候选建议", int(repair_summary.get("suggested_replacement_count") or 0))
+                        r3.metric("可自动修复", int(repair_summary.get("auto_repair_count") or 0))
+                        r4.metric("索引文件数", int(repair_summary.get("indexed_file_count") or 0))
+                        search_roots = repair_summary.get("search_roots") if isinstance(repair_summary.get("search_roots"), list) else []
+                        if search_roots:
+                            st.caption("搜索目录: " + " | ".join([str(root) for root in search_roots]))
+                        if bool(repair_summary.get("index_truncated")):
+                            st.warning("搜索目录文件数超过索引上限，修复建议可能不完整。")
+                        if repair_rows:
+                            repair_df = pd.DataFrame(repair_rows)
+                            st.dataframe(repair_df.head(100), use_container_width=True, hide_index=True)
+                            st.download_button(
+                                label="下载路径修复建议 CSV",
+                                data=repair_df.to_csv(index=False).encode("utf-8-sig"),
+                                file_name="input_path_repair_plan.csv",
+                                mime="text/csv",
+                                use_container_width=True,
+                                key="download_input_path_repair_plan_csv",
+                            )
+
+                            csv_path_text = str(main_csv.get("path") or "").strip()
+                            auto_repair_count = int(repair_summary.get("auto_repair_count") or 0)
+                            if csv_path_text and auto_repair_count > 0:
+                                try:
+                                    source_csv_path = Path(csv_path_text).expanduser().resolve()
+                                    source_df = _read_local_csv(source_csv_path)
+                                    repaired_df = apply_input_path_repair_plan(
+                                        source_df,
+                                        repair_rows,
+                                        min_confidence=AUTO_REPAIR_CONFIDENCE_THRESHOLD,
+                                    )
+                                    repaired_csv_bytes = repaired_df.to_csv(index=False).encode("utf-8-sig")
+                                    st.download_button(
+                                        label="下载自动修复版 input_csv",
+                                        data=repaired_csv_bytes,
+                                        file_name=f"{source_csv_path.stem}_path_repaired.csv",
+                                        mime="text/csv",
+                                        use_container_width=True,
+                                        key="download_input_path_repaired_csv",
+                                    )
+                                    if st.button(
+                                        "保存并使用自动修复版 input_csv",
+                                        use_container_width=True,
+                                        key="save_and_use_input_path_repaired_csv",
+                                    ):
+                                        repair_dir = LOCAL_APP_RUN_ROOT / "_input_path_repairs"
+                                        repair_dir.mkdir(parents=True, exist_ok=True)
+                                        repaired_path = (
+                                            repair_dir
+                                            / f"{_slugify_name(source_csv_path.stem)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_path_repaired.csv"
+                                        )
+                                        repaired_df.to_csv(repaired_path, index=False)
+                                        st.session_state["input_csv_local_path"] = str(repaired_path)
+                                        st.session_state["start_mode"] = "input_csv"
+                                        st.success(f"已保存修复版 input_csv: {repaired_path}")
+                                        st.rerun()
+                                except Exception as exc:
+                                    st.warning(f"生成修复版 input_csv 失败: {exc}")
+            else:
+                feature_meta = [
+                    ("可转数值列", int(batch_profile.get("numeric_column_count") or 0)),
+                    ("包含 pred_prob", "是" if bool(batch_profile.get("has_pred_prob")) else "否"),
+                    ("包含规则分数", "是" if bool(batch_profile.get("has_rule_score")) else "否"),
+                ]
+                st.dataframe(
+                    pd.DataFrame([{"项目": name, "值": value} for name, value in feature_meta]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                numeric_preview = batch_profile.get("numeric_columns_preview") if isinstance(batch_profile.get("numeric_columns_preview"), list) else []
+                if numeric_preview:
+                    st.caption("数值列预览: " + ", ".join([str(col) for col in numeric_preview]))
+
+        processing_plan = report.get("processing_plan") if isinstance(report.get("processing_plan"), dict) else {}
+        if processing_plan:
+            st.subheader("本次将如何处理")
+            q1, q2, q3 = st.columns(3)
+            q1.metric("处理行数", int(processing_plan.get("row_count") or 0))
+            q2.metric("top_k", int(processing_plan.get("top_k") or 0))
+            q3.metric("skip_failed_rows", "是" if bool(processing_plan.get("skip_failed_rows")) else "否")
+            label_plan = str(processing_plan.get("label_plan") or "")
+            if label_plan:
+                st.caption(label_plan)
+            stages = processing_plan.get("stages") if isinstance(processing_plan.get("stages"), list) else []
+            if stages:
+                st.dataframe(pd.DataFrame(stages), use_container_width=True, hide_index=True)
+            expected_outputs = processing_plan.get("expected_key_outputs") if isinstance(processing_plan.get("expected_key_outputs"), list) else []
+            if expected_outputs:
+                st.caption("关键输出: " + ", ".join([str(item) for item in expected_outputs]))
+
         preview_rows = main_csv.get("preview_rows") if isinstance(main_csv.get("preview_rows"), list) else []
         if preview_rows:
+            st.subheader("CSV 前 5 行预览")
             st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
 
     optional_files = report.get("optional_files") if isinstance(report.get("optional_files"), list) else []
     if optional_files:
         st.caption("默认文件来源检查")
         st.dataframe(pd.DataFrame(optional_files), use_container_width=True, hide_index=True)
+
+    runtime_dependencies = (
+        report.get("runtime_dependencies") if isinstance(report.get("runtime_dependencies"), dict) else {}
+    )
+    if runtime_dependencies:
+        st.caption("运行环境依赖检查")
+        checked_python = str(runtime_dependencies.get("checked_python_executable") or "N/A")
+        st.caption(f"检查解释器: {checked_python}")
+        dep_col1, dep_col2 = st.columns(2)
+        checked_dependencies = (
+            runtime_dependencies.get("checked_dependencies")
+            if isinstance(runtime_dependencies.get("checked_dependencies"), list)
+            else []
+        )
+        missing_dependencies = (
+            runtime_dependencies.get("missing_dependencies")
+            if isinstance(runtime_dependencies.get("missing_dependencies"), list)
+            else []
+        )
+        dep_col1.metric("依赖检查项", len(checked_dependencies))
+        dep_col2.metric("缺失依赖", len(missing_dependencies))
+
+        dependency_error = str(runtime_dependencies.get("error_message") or "").strip()
+        if dependency_error:
+            st.error(f"依赖检查失败: {dependency_error}")
+        elif missing_dependencies:
+            st.error(
+                "缺少依赖: "
+                + format_missing_dependency_summary(missing_dependencies)
+                + "。"
+            )
+            st.dataframe(pd.DataFrame(missing_dependencies), use_container_width=True, hide_index=True)
+        else:
+            st.success("关键 Python 依赖检查通过。")
+
+    st.download_button(
+        label="下载输入检查报告 JSON",
+        data=json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name="input_preflight_report.json",
+        mime="application/json",
+        use_container_width=True,
+    )
 
 
 def _render_input_status_panel(
@@ -1733,6 +3025,7 @@ def _render_input_status_panel(
     default_pocket_upload: Any,
     default_catalytic_upload: Any,
     default_ligand_upload: Any,
+    experiment_plan_override_upload: Any,
     form_payload: dict[str, Any],
 ) -> None:
     st.subheader("当前输入状态")
@@ -1775,6 +3068,12 @@ def _render_input_status_panel(
                 local_path_text=str(form_payload.get("default_ligand_local_path") or ""),
                 required=False,
             ),
+            _build_source_status_row(
+                label="experiment_plan_override_csv",
+                uploaded_file=experiment_plan_override_upload,
+                local_path_text=str(form_payload.get("experiment_plan_override_local_path") or ""),
+                required=False,
+            ),
         ]
     )
     st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
@@ -1796,8 +3095,19 @@ def _render_input_status_panel(
             mime="text/csv",
             use_container_width=True,
         )
+        st.download_button(
+            label="下载实验计划覆盖 CSV 模板",
+            data=_build_sample_experiment_plan_override_csv_text().encode("utf-8"),
+            file_name="experiment_plan_override_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
         st.caption("input_csv 必需列: " + ", ".join(INPUT_CSV_REQUIRED_COLUMNS))
         st.caption("pose_features.csv 最小必需列: " + ", ".join(FEATURE_CSV_REQUIRED_COLUMNS))
+        st.caption(
+            "实验计划覆盖 CSV 可选列: nanobody_id, plan_override, experiment_status, "
+            "experiment_result, validation_label, experiment_owner, experiment_cost, experiment_note。"
+        )
         st.caption(
             "如果使用 zip 或目录导入，建议文件名尽量使用 "
             "`input_pose_table.csv`、`pose_features.csv`、`pocket*`、`catalytic*`、`ligand*`，"
@@ -1820,6 +3130,31 @@ def _render_input_status_panel(
         detected_items = last_bundle_import.get("detected_items")
         if isinstance(detected_items, list) and detected_items:
             st.dataframe(pd.DataFrame(detected_items), use_container_width=True, hide_index=True)
+        generated_input_table = (
+            last_bundle_import.get("generated_input_table")
+            if isinstance(last_bundle_import.get("generated_input_table"), dict)
+            else None
+        )
+        if generated_input_table is not None:
+            st.subheader("自动生成的 input_pose_table.csv")
+            gen_col1, gen_col2 = st.columns(2)
+            gen_col1.metric("生成行数", int(generated_input_table.get("row_count") or 0))
+            gen_col2.metric("识别 PDB 数", int(generated_input_table.get("pose_pdb_count") or 0))
+            generated_csv_path = Path(str(generated_input_table.get("generated_csv_path") or ""))
+            st.caption("自动生成表只做保守推断；运行前仍建议点击“检查当前输入”确认 ID 和路径是否符合预期。")
+            st.code(str(generated_csv_path), language="text")
+            preview_rows = generated_input_table.get("preview_rows")
+            if isinstance(preview_rows, list) and preview_rows:
+                st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
+            if generated_csv_path.exists():
+                st.download_button(
+                    label="下载自动生成的 input_pose_table.csv",
+                    data=generated_csv_path.read_bytes(),
+                    file_name=generated_csv_path.name,
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_generated_input_pose_table_csv",
+                )
         preview_items = last_bundle_import.get("bundle_preview_items")
         if isinstance(preview_items, list) and preview_items:
             with st.expander("查看导入源文件预览"):
@@ -1860,9 +3195,68 @@ def _collect_download_artifacts(
 
     ordered_keys = [
         "recommended_pipeline_summary_json",
+        "demo_overview_html",
+        "demo_readme_md",
+        "demo_interpretation_md",
+        "real_data_starter_readme_md",
+        "real_data_starter_manifest_json",
+        "mini_pdb_example_readme_md",
+        "mini_pdb_example_input_csv",
         "execution_report_md",
+        "quality_gate_summary_json",
+        "quality_gate_checks_csv",
+        "quality_gate_report_md",
+        "geometry_proxy_audit_summary_json",
+        "geometry_proxy_audit_report_md",
+        "geometry_proxy_feature_summary_csv",
+        "geometry_proxy_flagged_poses_csv",
+        "geometry_proxy_candidate_audit_csv",
+        "batch_decision_summary_json",
+        "batch_decision_summary_md",
+        "batch_decision_summary_cards_csv",
         "rule_ranking_csv",
         "ml_ranking_csv",
+        "consensus_ranking_csv",
+        "consensus_summary_json",
+        "consensus_report_md",
+        "score_explanation_cards_csv",
+        "score_explanation_cards_summary_json",
+        "score_explanation_cards_md",
+        "score_explanation_cards_html",
+        "parameter_sensitivity_candidate_csv",
+        "parameter_sensitivity_sensitive_csv",
+        "parameter_sensitivity_summary_json",
+        "parameter_sensitivity_report_md",
+        "candidate_report_index_html",
+        "candidate_report_manifest_csv",
+        "candidate_report_summary_json",
+        "candidate_report_zip",
+        "candidate_tradeoff_table_csv",
+        "candidate_pairwise_comparisons_csv",
+        "candidate_group_comparison_summary_csv",
+        "candidate_comparison_summary_json",
+        "candidate_comparison_report_md",
+        "ai_run_summary_md",
+        "ai_top_candidates_explanation_md",
+        "ai_failure_diagnosis_md",
+        "ai_assistant_summary_json",
+        "run_provenance_card_json",
+        "run_provenance_card_md",
+        "run_artifact_manifest_csv",
+        "run_input_file_manifest_csv",
+        "run_provenance_integrity_json",
+        "experiment_suggestions_csv",
+        "experiment_suggestions_summary_json",
+        "experiment_suggestions_report_md",
+        "experiment_plan_csv",
+        "experiment_plan_summary_json",
+        "experiment_plan_md",
+        "experiment_plan_state_ledger_csv",
+        "validation_evidence_summary_json",
+        "validation_evidence_report_md",
+        "validation_evidence_by_candidate_csv",
+        "validation_evidence_topk_csv",
+        "validation_evidence_action_items_csv",
         "pose_predictions_csv",
         "training_summary_json",
         "training_log_csv",
@@ -1881,6 +3275,47 @@ def _collect_download_artifacts(
     derived_paths = {
         "recommended_pipeline_summary_json": _resolve_output_file(
             "recommended_pipeline_summary.json",
+            summary=summary,
+            metadata=metadata,
+        ),
+        "demo_overview_html": _resolve_output_file(
+            "DEMO_OVERVIEW.html",
+            summary=summary,
+            metadata=metadata,
+        ),
+        "demo_readme_md": _resolve_output_file(
+            "DEMO_README.md",
+            summary=summary,
+            metadata=metadata,
+        ),
+        "demo_interpretation_md": _resolve_output_file(
+            "DEMO_INTERPRETATION.md",
+            summary=summary,
+            metadata=metadata,
+        ),
+        "real_data_starter_readme_md": _resolve_output_file(
+            "REAL_DATA_STARTER",
+            "README_REAL_DATA_STARTER.md",
+            summary=summary,
+            metadata=metadata,
+        ),
+        "real_data_starter_manifest_json": _resolve_output_file(
+            "REAL_DATA_STARTER",
+            "real_data_starter_manifest.json",
+            summary=summary,
+            metadata=metadata,
+        ),
+        "mini_pdb_example_readme_md": _resolve_output_file(
+            "REAL_DATA_STARTER",
+            "MINI_PDB_EXAMPLE",
+            "README_MINI_PDB_EXAMPLE.md",
+            summary=summary,
+            metadata=metadata,
+        ),
+        "mini_pdb_example_input_csv": _resolve_output_file(
+            "REAL_DATA_STARTER",
+            "MINI_PDB_EXAMPLE",
+            "input_pose_table.csv",
             summary=summary,
             metadata=metadata,
         ),
@@ -2744,8 +4179,9 @@ def _create_html_summary_export(
     out_dir = _get_out_dir(summary, metadata)
     out_dir_text = "" if out_dir is None else str(out_dir)
 
-    ml_ranking_path = Path(str(artifacts.get("ml_ranking_csv"))) if artifacts.get("ml_ranking_csv") else None
     rule_ranking_path = Path(str(artifacts.get("rule_ranking_csv"))) if artifacts.get("rule_ranking_csv") else None
+    ml_ranking_path = Path(str(artifacts.get("ml_ranking_csv"))) if artifacts.get("ml_ranking_csv") else None
+    consensus_ranking_path = Path(str(artifacts.get("consensus_ranking_csv"))) if artifacts.get("consensus_ranking_csv") else None
     report_path = Path(str(artifacts.get("execution_report_md"))) if artifacts.get("execution_report_md") else None
     training_summary_path = _resolve_output_file(
         "model_outputs",
@@ -2754,8 +4190,9 @@ def _create_html_summary_export(
         metadata=metadata,
     )
 
-    ml_df = _load_csv(ml_ranking_path) if ml_ranking_path is not None and ml_ranking_path.exists() else None
     rule_df = _load_csv(rule_ranking_path) if rule_ranking_path is not None and rule_ranking_path.exists() else None
+    ml_df = _load_csv(ml_ranking_path) if ml_ranking_path is not None and ml_ranking_path.exists() else None
+    consensus_df = _load_csv(consensus_ranking_path) if consensus_ranking_path is not None and consensus_ranking_path.exists() else None
     training_payload = _load_json(training_summary_path) if training_summary_path is not None and training_summary_path.exists() else None
     report_text = _read_text(report_path) if report_path is not None and report_path.exists() else ""
     inventory_df = _build_output_inventory(summary, metadata)
@@ -2821,6 +4258,18 @@ def _create_html_summary_export(
     )
     all_empty_columns = feature_qc.get("all_empty_columns") if isinstance(feature_qc.get("all_empty_columns"), list) else []
     near_constant_columns = feature_qc.get("near_constant_columns") if isinstance(feature_qc.get("near_constant_columns"), list) else []
+    pocket_shape_qc = feature_qc.get("pocket_shape_qc") if isinstance(feature_qc.get("pocket_shape_qc"), dict) else {}
+    pocket_shape_cards = _build_metric_cards_html(
+        [
+            ("Pocket Overwide 阈值", pocket_shape_qc.get("overwide_threshold")),
+            ("高 Overwide 行数", pocket_shape_qc.get("high_overwide_row_count")),
+            ("高 Overwide 占比", pocket_shape_qc.get("high_overwide_row_fraction")),
+            ("Overwide P95", pocket_shape_qc.get("overwide_proxy_p95")),
+            ("Overwide Max", pocket_shape_qc.get("overwide_proxy_max")),
+        ]
+    ) if pocket_shape_qc else ""
+    pocket_shape_top_rows = pocket_shape_qc.get("top_overwide_rows") if isinstance(pocket_shape_qc.get("top_overwide_rows"), list) else []
+    pocket_shape_top_df = pd.DataFrame(pocket_shape_top_rows) if pocket_shape_top_rows else None
 
     failed_rows_df = None
     warning_rows_df = None
@@ -2881,6 +4330,11 @@ def _create_html_summary_export(
     </section>
 
     <section class="section">
+      <h2>Rule + ML 共识排名预览</h2>
+      {_df_to_html_table(consensus_df, max_rows=10)}
+    </section>
+
+    <section class="section">
       <h2>ML 排名预览</h2>
       {_df_to_html_table(ml_df, max_rows=10)}
     </section>
@@ -2901,6 +4355,8 @@ def _create_html_summary_export(
       {"<h3>Status Counts</h3><ul>" + status_counts_html + "</ul>" if status_counts_html else ""}
       {"<p><strong>全空列:</strong> " + html.escape(", ".join([str(col) for col in all_empty_columns[:20]])) + "</p>" if all_empty_columns else ""}
       {"<p><strong>近常量列:</strong> " + html.escape(", ".join([str(col) for col in near_constant_columns[:20]])) + "</p>" if near_constant_columns else ""}
+      {"<h3>Pocket Shape QC</h3><div class='grid'>" + pocket_shape_cards + "</div>" if pocket_shape_cards else ""}
+      {_df_to_html_table(pocket_shape_top_df, max_rows=10) if pocket_shape_top_df is not None else ""}
     </section>
 
     <section class="section">
@@ -2956,11 +4412,13 @@ def _create_pdf_summary_export(
     notes = summary.get("notes") if isinstance(summary.get("notes"), list) else []
     out_dir = _get_out_dir(summary, metadata)
 
-    ml_ranking_path = Path(str(artifacts.get("ml_ranking_csv"))) if artifacts.get("ml_ranking_csv") else None
     rule_ranking_path = Path(str(artifacts.get("rule_ranking_csv"))) if artifacts.get("rule_ranking_csv") else None
+    ml_ranking_path = Path(str(artifacts.get("ml_ranking_csv"))) if artifacts.get("ml_ranking_csv") else None
+    consensus_ranking_path = Path(str(artifacts.get("consensus_ranking_csv"))) if artifacts.get("consensus_ranking_csv") else None
     report_path = Path(str(artifacts.get("execution_report_md"))) if artifacts.get("execution_report_md") else None
-    ml_df = _load_csv(ml_ranking_path) if ml_ranking_path is not None and ml_ranking_path.exists() else None
     rule_df = _load_csv(rule_ranking_path) if rule_ranking_path is not None and rule_ranking_path.exists() else None
+    ml_df = _load_csv(ml_ranking_path) if ml_ranking_path is not None and ml_ranking_path.exists() else None
+    consensus_df = _load_csv(consensus_ranking_path) if consensus_ranking_path is not None and consensus_ranking_path.exists() else None
     report_text = _read_text(report_path) if report_path is not None and report_path.exists() else ""
 
     training_payload = _load_training_summary_payload(summary, metadata)
@@ -3042,6 +4500,7 @@ def _create_pdf_summary_export(
             }
         )
 
+    sections.append({"title": "Rule + ML 共识排名预览", "kind": "table", "lines": _df_to_pdf_lines(consensus_df, max_rows=10, max_cols=6)})
     sections.append({"title": "ML 排名预览", "kind": "table", "lines": _df_to_pdf_lines(ml_df, max_rows=10, max_cols=6)})
     sections.append({"title": "Rule 排名预览", "kind": "table", "lines": _df_to_pdf_lines(rule_df, max_rows=10, max_cols=6)})
 
@@ -3262,6 +4721,149 @@ def _render_feature_qc_panel(
     c3.metric("Failed Rows", int(processing_summary.get("failed_rows", 0)))
     c4.metric("Rows With Warning", int(processing_summary.get("rows_with_warning_message", 0)))
 
+    artifacts = summary.get("artifacts") if isinstance(summary, dict) and isinstance(summary.get("artifacts"), dict) else {}
+    quality_gate_summary_path = (
+        Path(str(artifacts.get("quality_gate_summary_json")))
+        if artifacts.get("quality_gate_summary_json")
+        else _resolve_output_file("quality_gate", "quality_gate_summary.json", summary=summary, metadata=metadata)
+    )
+    quality_gate_checks_path = (
+        Path(str(artifacts.get("quality_gate_checks_csv")))
+        if artifacts.get("quality_gate_checks_csv")
+        else _resolve_output_file("quality_gate", "quality_gate_checks.csv", summary=summary, metadata=metadata)
+    )
+    quality_gate_report_path = (
+        Path(str(artifacts.get("quality_gate_report_md")))
+        if artifacts.get("quality_gate_report_md")
+        else _resolve_output_file("quality_gate", "quality_gate_report.md", summary=summary, metadata=metadata)
+    )
+    quality_gate_summary = _load_json(quality_gate_summary_path) if quality_gate_summary_path is not None and quality_gate_summary_path.exists() else {}
+    if quality_gate_summary:
+        st.subheader("统一质量判定")
+        gate_col1, gate_col2, gate_col3, gate_col4 = st.columns(4)
+        gate_status = str(quality_gate_summary.get("overall_status") or "WARN").upper()
+        gate_col1.metric("Quality Gate", gate_status)
+        gate_col2.metric("PASS", int(quality_gate_summary.get("pass_count") or 0))
+        gate_col3.metric("WARN", int(quality_gate_summary.get("warn_count") or 0))
+        gate_col4.metric("FAIL", int(quality_gate_summary.get("fail_count") or 0))
+        gate_message = str(quality_gate_summary.get("decision") or "")
+        if gate_status == "PASS":
+            st.success(gate_message)
+        elif gate_status == "FAIL":
+            st.error(gate_message)
+        else:
+            st.warning(gate_message)
+        if quality_gate_checks_path is not None and quality_gate_checks_path.exists():
+            quality_checks_df = _load_csv(quality_gate_checks_path)
+            if quality_checks_df is not None and not quality_checks_df.empty:
+                st.dataframe(quality_checks_df, use_container_width=True, hide_index=True)
+        qg_col1, qg_col2 = st.columns(2)
+        if quality_gate_checks_path is not None and quality_gate_checks_path.exists():
+            qg_col1.download_button(
+                label="下载质量判定检查 CSV",
+                data=quality_gate_checks_path.read_bytes(),
+                file_name=quality_gate_checks_path.name,
+                mime="text/csv",
+                use_container_width=True,
+                key="download_quality_gate_checks_csv",
+            )
+        if quality_gate_report_path is not None and quality_gate_report_path.exists():
+            qg_col2.download_button(
+                label="下载质量判定报告 Markdown",
+                data=quality_gate_report_path.read_bytes(),
+                file_name=quality_gate_report_path.name,
+                mime="text/markdown",
+                use_container_width=True,
+                key="download_quality_gate_report_md",
+            )
+            with st.expander("查看质量判定 Markdown"):
+                st.markdown(_read_text(quality_gate_report_path))
+
+    geometry_audit_summary_path = (
+        Path(str(artifacts.get("geometry_proxy_audit_summary_json")))
+        if artifacts.get("geometry_proxy_audit_summary_json")
+        else _resolve_output_file("geometry_proxy_audit", "geometry_proxy_audit_summary.json", summary=summary, metadata=metadata)
+    )
+    geometry_audit_report_path = (
+        Path(str(artifacts.get("geometry_proxy_audit_report_md")))
+        if artifacts.get("geometry_proxy_audit_report_md")
+        else _resolve_output_file("geometry_proxy_audit", "geometry_proxy_audit_report.md", summary=summary, metadata=metadata)
+    )
+    geometry_flagged_path = (
+        Path(str(artifacts.get("geometry_proxy_flagged_poses_csv")))
+        if artifacts.get("geometry_proxy_flagged_poses_csv")
+        else _resolve_output_file("geometry_proxy_audit", "geometry_proxy_flagged_poses.csv", summary=summary, metadata=metadata)
+    )
+    geometry_candidate_path = (
+        Path(str(artifacts.get("geometry_proxy_candidate_audit_csv")))
+        if artifacts.get("geometry_proxy_candidate_audit_csv")
+        else _resolve_output_file("geometry_proxy_audit", "geometry_proxy_candidate_audit.csv", summary=summary, metadata=metadata)
+    )
+    geometry_audit_summary = (
+        _load_json(geometry_audit_summary_path)
+        if geometry_audit_summary_path is not None and geometry_audit_summary_path.exists()
+        else {}
+    )
+    if geometry_audit_summary:
+        st.subheader("几何 proxy 一致性审计")
+        st.caption("检查 mouth/path/pocket/contact 等静态 proxy 是否互相矛盾；只做 QC 和解释，不改变 Rule/ML/Consensus 分数。")
+        ga_col1, ga_col2, ga_col3, ga_col4 = st.columns(4)
+        audit_status = str(geometry_audit_summary.get("audit_status") or "UNKNOWN").upper()
+        ga_col1.metric("Proxy Audit", audit_status)
+        ga_col2.metric("Flagged Poses", int(geometry_audit_summary.get("flagged_pose_count") or 0))
+        ga_col3.metric("Flagged Fraction", _ratio_text(geometry_audit_summary.get("flagged_pose_fraction")))
+        ga_col4.metric("Candidates", int(geometry_audit_summary.get("candidate_count") or 0))
+        if audit_status == "PASS":
+            st.success("几何 proxy 未发现批次级阻塞风险。")
+        elif audit_status == "FAIL":
+            st.error("几何 proxy 审计失败，建议先检查输入和特征表。")
+        else:
+            st.warning("几何 proxy 存在较多不一致信号，建议先复核 flagged rows。")
+
+        flag_counts = geometry_audit_summary.get("flag_counts") if isinstance(geometry_audit_summary.get("flag_counts"), dict) else {}
+        if flag_counts:
+            st.dataframe(
+                pd.DataFrame(
+                    [{"flag": key, "count": value} for key, value in flag_counts.items()]
+                ).sort_values(by="count", ascending=False),
+                use_container_width=True,
+                hide_index=True,
+            )
+        next_actions = geometry_audit_summary.get("next_actions") if isinstance(geometry_audit_summary.get("next_actions"), list) else []
+        for action in next_actions[:4]:
+            st.write(f"- {action}")
+
+        ga_download_col1, ga_download_col2, ga_download_col3 = st.columns(3)
+        if geometry_flagged_path is not None and geometry_flagged_path.exists():
+            ga_download_col1.download_button(
+                label="下载 flagged poses CSV",
+                data=geometry_flagged_path.read_bytes(),
+                file_name=geometry_flagged_path.name,
+                mime="text/csv",
+                use_container_width=True,
+                key="download_geometry_proxy_flagged_poses_csv",
+            )
+        if geometry_candidate_path is not None and geometry_candidate_path.exists():
+            ga_download_col2.download_button(
+                label="下载 candidate audit CSV",
+                data=geometry_candidate_path.read_bytes(),
+                file_name=geometry_candidate_path.name,
+                mime="text/csv",
+                use_container_width=True,
+                key="download_geometry_proxy_candidate_audit_csv",
+            )
+        if geometry_audit_report_path is not None and geometry_audit_report_path.exists():
+            ga_download_col3.download_button(
+                label="下载 proxy audit Markdown",
+                data=geometry_audit_report_path.read_bytes(),
+                file_name=geometry_audit_report_path.name,
+                mime="text/markdown",
+                use_container_width=True,
+                key="download_geometry_proxy_audit_report_md",
+            )
+            with st.expander("查看几何 proxy 审计 Markdown"):
+                st.markdown(_read_text(geometry_audit_report_path))
+
     split_mode_counts = processing_summary.get("split_mode_counts") if isinstance(processing_summary.get("split_mode_counts"), dict) else {}
     status_counts = feature_qc.get("status_counts") if isinstance(feature_qc.get("status_counts"), dict) else {}
     if split_mode_counts:
@@ -3280,6 +4882,19 @@ def _render_feature_qc_panel(
         meta_col2.warning("近常量列: " + ", ".join([str(col) for col in near_constant_columns[:12]]))
     else:
         meta_col2.success("当前没有近常量列。")
+
+    pocket_shape_qc = feature_qc.get("pocket_shape_qc") if isinstance(feature_qc.get("pocket_shape_qc"), dict) else {}
+    if pocket_shape_qc:
+        st.subheader("Pocket Shape QC")
+        q1, q2, q3, q4 = st.columns(4)
+        q1.metric("Overwide 阈值", _metric_text(pocket_shape_qc.get("overwide_threshold")))
+        q2.metric("高 Overwide 行数", int(pocket_shape_qc.get("high_overwide_row_count", 0)))
+        q3.metric("高 Overwide 占比", _ratio_text(pocket_shape_qc.get("high_overwide_row_fraction")))
+        q4.metric("Overwide Max", _metric_text(pocket_shape_qc.get("overwide_proxy_max")))
+        top_overwide_rows = pocket_shape_qc.get("top_overwide_rows") if isinstance(pocket_shape_qc.get("top_overwide_rows"), list) else []
+        if top_overwide_rows:
+            st.caption("以下为 pocket_shape_overwide_proxy 最高的行，适合优先复核 pocket residue 边界。")
+            st.dataframe(pd.DataFrame(top_overwide_rows), use_container_width=True)
 
     if isinstance(feature_df, pd.DataFrame) and not feature_df.empty:
         base_cols = [col for col in ["nanobody_id", "conformer_id", "pose_id", "pdb_path", "split_mode", "status", "error_message", "warning_message"] if col in feature_df.columns]
@@ -3386,6 +5001,518 @@ def _build_history_table(records: list[dict[str, Any]]) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def _build_and_save_global_experiment_ledger() -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any], dict[str, Path]]:
+    latest_df, history_df, summary = build_global_experiment_ledger(LOCAL_APP_RUN_ROOT)
+    latest_path = LOCAL_APP_RUN_ROOT / "experiment_state_ledger_global.csv"
+    history_path = LOCAL_APP_RUN_ROOT / "experiment_state_ledger_global_history.csv"
+    summary_path = LOCAL_APP_RUN_ROOT / "experiment_state_ledger_global_summary.json"
+    latest_df.to_csv(latest_path, index=False)
+    history_df.to_csv(history_path, index=False)
+    _write_json(summary_path, summary)
+    return latest_df, history_df, summary, {
+        "latest_csv": latest_path,
+        "history_csv": history_path,
+        "summary_json": summary_path,
+    }
+
+
+def _sorted_non_empty_column_values(df: pd.DataFrame, column: str) -> list[str]:
+    if df.empty or column not in df.columns:
+        return []
+    values = df[column].map(_clean_cell_text)
+    values = values.loc[values.ne("")]
+    return sorted(values.unique().tolist())
+
+
+def _filter_by_column_values(df: pd.DataFrame, column: str, selected_values: list[str]) -> pd.DataFrame:
+    if df.empty or column not in df.columns or not selected_values:
+        return df
+    selected = {str(value) for value in selected_values}
+    mask = df[column].map(_clean_cell_text).isin(selected)
+    return df.loc[mask].copy()
+
+
+def _build_value_count_table(df: pd.DataFrame, column: str, label: str) -> pd.DataFrame:
+    if df.empty or column not in df.columns:
+        return pd.DataFrame(columns=[label, "count"])
+    values = df[column].map(_clean_cell_text)
+    values = values.where(values.ne(""), "empty")
+    counts = values.value_counts(dropna=False).rename_axis(label).reset_index(name="count")
+    return counts
+
+
+def _experiment_label_ready_count(df: pd.DataFrame) -> int:
+    if df.empty:
+        return 0
+    ready_mask = pd.Series(False, index=df.index)
+    if "validation_label" in df.columns:
+        ready_mask = ready_mask | df["validation_label"].map(_clean_cell_text).ne("")
+    if "experiment_result" in df.columns:
+        result_values = df["experiment_result"].map(lambda value: _clean_cell_text(value).lower())
+        ready_mask = ready_mask | result_values.isin({"positive", "negative", "1", "0", "true", "false"})
+    return int(ready_mask.sum())
+
+
+def _render_global_experiment_ledger_panel() -> None:
+    st.subheader("全局实验状态 ledger")
+    st.caption(
+        "从所有 `local_app_runs` 历史运行中汇总 `experiment_plan_state_ledger.csv` "
+        "和已编辑的 `experiment_plan_override_edited.csv`，每个 nanobody 默认保留最新状态。"
+    )
+    build_clicked = st.button(
+        "扫描历史并生成全局 ledger",
+        use_container_width=True,
+        key="build_global_experiment_ledger",
+    )
+    if not build_clicked and not (LOCAL_APP_RUN_ROOT / "experiment_state_ledger_global.csv").exists():
+        st.info("点击上方按钮生成全局实验状态表；生成后可下载或设置为下一轮 override。")
+        return
+
+    try:
+        if build_clicked:
+            latest_df, history_df, summary, paths = _build_and_save_global_experiment_ledger()
+        else:
+            latest_path = LOCAL_APP_RUN_ROOT / "experiment_state_ledger_global.csv"
+            history_path = LOCAL_APP_RUN_ROOT / "experiment_state_ledger_global_history.csv"
+            summary_path = LOCAL_APP_RUN_ROOT / "experiment_state_ledger_global_summary.json"
+            loaded_latest_df = _load_csv(latest_path)
+            loaded_history_df = _load_csv(history_path)
+            latest_df = loaded_latest_df if loaded_latest_df is not None else pd.DataFrame()
+            history_df = loaded_history_df if loaded_history_df is not None else pd.DataFrame()
+            summary = _load_json(summary_path) or {}
+            paths = {
+                "latest_csv": latest_path,
+                "history_csv": history_path,
+                "summary_json": summary_path,
+            }
+    except Exception as exc:
+        st.error(f"生成全局实验状态 ledger 失败: {exc}")
+        return
+
+    if latest_df.empty:
+        st.info("没有在历史运行中找到实验计划状态 ledger 或编辑后的 override 文件。")
+        return
+
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    metric_col1.metric("Nanobody 数", int(summary.get("unique_nanobody_count") or len(latest_df)))
+    metric_col2.metric("最新状态行", int(summary.get("latest_row_count") or len(latest_df)))
+    metric_col3.metric("历史状态记录", int(summary.get("history_row_count") or len(history_df)))
+
+    status_counts = summary.get("status_counts") if isinstance(summary.get("status_counts"), dict) else {}
+    if status_counts:
+        st.caption("状态分布: " + ", ".join([f"{key}={value}" for key, value in status_counts.items()]))
+
+    with st.expander("ledger 快速筛选与状态分布", expanded=True):
+        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
+        selected_statuses = filter_col1.multiselect(
+            "experiment_status",
+            options=_sorted_non_empty_column_values(latest_df, "experiment_status"),
+            default=[],
+            key="global_ledger_filter_status",
+        )
+        selected_results = filter_col2.multiselect(
+            "experiment_result",
+            options=_sorted_non_empty_column_values(latest_df, "experiment_result"),
+            default=[],
+            key="global_ledger_filter_result",
+        )
+        selected_overrides = filter_col3.multiselect(
+            "plan_override",
+            options=_sorted_non_empty_column_values(latest_df, "plan_override"),
+            default=[],
+            key="global_ledger_filter_override",
+        )
+        keyword = str(
+            filter_col4.text_input(
+                "关键词",
+                key="global_ledger_filter_keyword",
+                placeholder="nanobody / owner / note",
+            )
+            or ""
+        ).strip().lower()
+
+        filtered_latest_df = latest_df.copy()
+        filtered_latest_df = _filter_by_column_values(filtered_latest_df, "experiment_status", selected_statuses)
+        filtered_latest_df = _filter_by_column_values(filtered_latest_df, "experiment_result", selected_results)
+        filtered_latest_df = _filter_by_column_values(filtered_latest_df, "plan_override", selected_overrides)
+        if keyword:
+            searchable_columns = [
+                column
+                for column in ["nanobody_id", "experiment_owner", "experiment_note", "latest_source_run_name"]
+                if column in filtered_latest_df.columns
+            ]
+            if searchable_columns:
+                keyword_mask = pd.Series(False, index=filtered_latest_df.index)
+                for column in searchable_columns:
+                    keyword_mask = keyword_mask | filtered_latest_df[column].map(_clean_cell_text).str.lower().str.contains(
+                        keyword,
+                        regex=False,
+                        na=False,
+                    )
+                filtered_latest_df = filtered_latest_df.loc[keyword_mask].copy()
+
+        quick_col1, quick_col2, quick_col3, quick_col4 = st.columns(4)
+        quick_col1.metric("筛选后行数", int(len(filtered_latest_df)))
+        quick_col2.metric(
+            "completed",
+            int(
+                filtered_latest_df.get("experiment_status", pd.Series(dtype=object))
+                .map(lambda value: _clean_cell_text(value).lower())
+                .eq("completed")
+                .sum()
+            ),
+        )
+        quick_col3.metric("可回灌标签", _experiment_label_ready_count(filtered_latest_df))
+        quick_col4.metric(
+            "blocked/cancelled",
+            int(
+                filtered_latest_df.get("experiment_status", pd.Series(dtype=object))
+                .map(lambda value: _clean_cell_text(value).lower())
+                .isin({"blocked", "cancelled", "canceled"})
+                .sum()
+            ),
+        )
+
+        chart_col1, chart_col2 = st.columns(2)
+        status_chart_df = _build_value_count_table(filtered_latest_df, "experiment_status", "status")
+        if not status_chart_df.empty:
+            chart_col1.caption("实验状态分布")
+            chart_col1.bar_chart(status_chart_df.set_index("status"))
+        result_chart_df = _build_value_count_table(filtered_latest_df, "experiment_result", "result")
+        if not result_chart_df.empty:
+            chart_col2.caption("实验结果分布")
+            chart_col2.bar_chart(result_chart_df.set_index("result"))
+        st.caption(f"当前筛选保留 {len(filtered_latest_df)} / {len(latest_df)} 条；下载按钮会导出当前表格筛选后的可见排序。")
+
+    preferred_columns = [
+        "nanobody_id",
+        "plan_override",
+        "experiment_status",
+        "experiment_result",
+        "validation_label",
+        "experiment_owner",
+        "experiment_cost",
+        "experiment_note",
+        "last_plan_decision",
+        "last_plan_rank",
+        "latest_source_run_name",
+        "latest_source_kind",
+        "latest_source_mtime",
+        "source_record_count",
+    ]
+    view_df, export_df = _render_dataframe_view_controls(
+        filtered_latest_df,
+        key_prefix="global_experiment_ledger_view",
+        preferred_columns=preferred_columns,
+        default_sort_column="latest_source_mtime",
+        default_descending=True,
+    )
+    st.dataframe(view_df.head(200), use_container_width=True)
+
+    action_col1, action_col2, action_col3 = st.columns(3)
+    action_col1.download_button(
+        label="下载全局最新 ledger CSV",
+        data=export_df.to_csv(index=False).encode("utf-8"),
+        file_name=paths["latest_csv"].name,
+        mime="text/csv",
+        use_container_width=True,
+        key="download_global_experiment_ledger_csv",
+    )
+    action_col2.download_button(
+        label="下载完整历史状态 CSV",
+        data=history_df.to_csv(index=False).encode("utf-8"),
+        file_name=paths["history_csv"].name,
+        mime="text/csv",
+        use_container_width=True,
+        key="download_global_experiment_ledger_history_csv",
+    )
+    use_global_clicked = action_col3.button(
+        "设为下一轮 override",
+        use_container_width=True,
+        key="use_global_experiment_ledger_as_override",
+    )
+    if use_global_clicked:
+        st.session_state["_pending_experiment_plan_override_local_path"] = str(paths["latest_csv"])
+        st.session_state["_pending_experiment_plan_override_message"] = (
+            "已把全局实验状态 ledger 设置为下一轮 override 输入。"
+        )
+        st.success("已设置为下一轮 override，页面将刷新并回填左侧路径。")
+        st.rerun()
+
+    with st.expander("生成真实验证回灌报告"):
+        st.caption(
+            "只把明确的 `validation_label` 或 `experiment_result=positive/negative` 转成训练标签；"
+            "`completed` 但没有结果的候选只会进入待补结果清单。"
+        )
+        feedback_out_dir = LOCAL_APP_RUN_ROOT / "experiment_validation_feedback"
+        st.text_input(
+            "可选 pose_features.csv 路径",
+            key="validation_feedback_feature_csv_path",
+            help="填写后会额外生成 pose_features_with_experiment_labels.csv，可直接作为下一轮 feature_csv 输入。",
+        )
+        st.text_input(
+            "可选 consensus_ranking.csv 路径",
+            key="validation_feedback_consensus_csv_path",
+            help="填写后报告会合并共识排名信息，便于判断验证结果与当前排序是否一致。",
+        )
+        st.text_input(
+            "回灌标签列名",
+            key="validation_feedback_label_col",
+            help="写入带标签特征表的列名；建议保留 experiment_label，避免覆盖原始 label。",
+        )
+        feedback_clicked = st.button(
+            "生成验证回灌报告",
+            use_container_width=True,
+            key="build_experiment_validation_feedback",
+        )
+        feedback_summary_path = feedback_out_dir / "experiment_validation_summary.json"
+        if feedback_clicked:
+            try:
+                feedback_summary = build_experiment_validation_feedback(
+                    ledger_csv=paths["latest_csv"],
+                    out_dir=feedback_out_dir,
+                    feature_csv=str(st.session_state.get("validation_feedback_feature_csv_path") or "").strip()
+                    or None,
+                    consensus_csv=str(st.session_state.get("validation_feedback_consensus_csv_path") or "").strip()
+                    or None,
+                    label_col=str(st.session_state.get("validation_feedback_label_col") or "experiment_label"),
+                )
+                st.success(f"已生成验证回灌报告: {feedback_out_dir}")
+            except Exception as exc:
+                st.error(f"生成验证回灌报告失败: {exc}")
+                feedback_summary = {}
+        else:
+            feedback_summary = _load_json(feedback_summary_path) or {}
+
+        if isinstance(feedback_summary, dict) and feedback_summary:
+            fb_col1, fb_col2, fb_col3 = st.columns(3)
+            fb_col1.metric("可回灌标签", int(feedback_summary.get("label_ready_count") or 0))
+            fb_col2.metric("阳性", int(feedback_summary.get("positive_label_count") or 0))
+            fb_col3.metric("阴性", int(feedback_summary.get("negative_label_count") or 0))
+            outputs = feedback_summary.get("outputs") if isinstance(feedback_summary.get("outputs"), dict) else {}
+            feedback_downloads = [
+                ("下载验证状态报告 CSV", outputs.get("experiment_validation_status_report_csv"), "text/csv"),
+                ("下载可回灌标签 CSV", outputs.get("experiment_validation_labels_csv"), "text/csv"),
+                ("下载验证回灌 Markdown", outputs.get("experiment_validation_report_md"), "text/markdown"),
+                (
+                    "下载带实验标签的特征表 CSV",
+                    outputs.get("pose_features_with_experiment_labels_csv"),
+                    "text/csv",
+                ),
+            ]
+            for idx, (label, path_text, mime) in enumerate(feedback_downloads):
+                path = Path(str(path_text)) if path_text else None
+                if path is not None and path.exists():
+                    st.download_button(
+                        label=label,
+                        data=path.read_bytes(),
+                        file_name=path.name,
+                        mime=mime,
+                        use_container_width=True,
+                        key=f"download_validation_feedback_{idx}",
+                    )
+
+            feature_out = outputs.get("pose_features_with_experiment_labels_csv")
+            feature_out_path = Path(str(feature_out)) if feature_out else None
+            if feature_out_path is not None and feature_out_path.exists():
+                st.caption(
+                    "可将该特征表设为下一轮输入，并自动把左侧 `label_col` 切换为 "
+                    f"`{str(st.session_state.get('validation_feedback_label_col') or 'experiment_label')}`。"
+                )
+                if st.button(
+                    "使用带实验标签特征表作为下一轮输入",
+                    use_container_width=True,
+                    key="use_validation_labeled_feature_csv",
+                ):
+                    label_col = str(st.session_state.get("validation_feedback_label_col") or "experiment_label")
+                    st.session_state["_pending_feature_csv_local_path"] = str(feature_out_path)
+                    st.session_state["_pending_feature_label_col"] = label_col
+                    st.session_state["_pending_feature_csv_message"] = (
+                        f"已把验证回灌特征表设置为下一轮 feature_csv，并使用 label_col={label_col}。"
+                    )
+                    st.success("已设置为下一轮输入，页面将刷新并回填左侧路径。")
+                    st.rerun()
+
+
+def _render_result_archive_panel() -> None:
+    st.subheader("结果自动归档与长期趋势")
+    st.caption(
+        "扫描 `local_app_runs`，生成运行级索引、关键产物 manifest、跨批次 lineage，以及验证回灌再训练对照的长期趋势表。"
+        "该步骤只建立索引，不复制大文件、不改变历史运行结果。"
+    )
+    archive_dir = LOCAL_APP_RUN_ROOT / "result_archive"
+    build_clicked = st.button(
+        "生成/刷新结果归档索引",
+        use_container_width=True,
+        key="build_result_archive_index",
+    )
+    if build_clicked:
+        try:
+            archive_summary = build_result_archive(local_app_runs=LOCAL_APP_RUN_ROOT, out_dir=archive_dir)
+            st.success(f"已生成结果归档索引: {archive_dir}")
+        except Exception as exc:
+            st.error(f"生成结果归档索引失败: {exc}")
+            archive_summary = {}
+    else:
+        archive_summary = _load_json(archive_dir / "result_archive_summary.json") or {}
+
+    if not archive_summary:
+        st.info("点击上方按钮生成结果归档索引。")
+        return
+
+    ar_col1, ar_col2, ar_col3 = st.columns(3)
+    ar_col1.metric("归档运行数", int(archive_summary.get("run_count") or 0))
+    ar_col2.metric("已存在产物数", int(archive_summary.get("existing_artifact_count") or 0))
+    ar_col3.metric("再训练对照数", int(archive_summary.get("validation_retrain_comparison_count") or 0))
+    lineage_col1, lineage_col2, lineage_col3 = st.columns(3)
+    lineage_col1.metric("lineage 运行数", int(archive_summary.get("lineage_row_count") or 0))
+    lineage_col2.metric("共享输入 manifest 组", int(archive_summary.get("shared_input_manifest_group_count") or 0))
+    lineage_col3.metric("共享参数组", int(archive_summary.get("shared_parameter_hash_group_count") or 0))
+    graph_col1, graph_col2 = st.columns(2)
+    graph_col1.metric("lineage 图边数", int(archive_summary.get("lineage_graph_edge_count") or 0))
+    graph_col2.metric("共享 lineage 图组", int(archive_summary.get("lineage_graph_shared_group_count") or 0))
+
+    outputs = archive_summary.get("outputs") if isinstance(archive_summary.get("outputs"), dict) else {}
+    runs_csv = Path(str(outputs.get("runs_csv"))) if outputs.get("runs_csv") else archive_dir / "result_archive_runs.csv"
+    artifacts_csv = (
+        Path(str(outputs.get("artifact_manifest_csv")))
+        if outputs.get("artifact_manifest_csv")
+        else archive_dir / "result_archive_artifact_manifest.csv"
+    )
+    trends_csv = (
+        Path(str(outputs.get("validation_retrain_trends_csv")))
+        if outputs.get("validation_retrain_trends_csv")
+        else archive_dir / "result_archive_validation_retrain_trends.csv"
+    )
+    lineage_csv = (
+        Path(str(outputs.get("lineage_csv")))
+        if outputs.get("lineage_csv")
+        else archive_dir / "result_archive_lineage.csv"
+    )
+    lineage_graph_json = (
+        Path(str(outputs.get("lineage_graph_json")))
+        if outputs.get("lineage_graph_json")
+        else archive_dir / "result_archive_lineage_graph.json"
+    )
+    lineage_graph_html = (
+        Path(str(outputs.get("lineage_graph_html")))
+        if outputs.get("lineage_graph_html")
+        else archive_dir / "result_archive_lineage_graph.html"
+    )
+    lineage_graph_md = (
+        Path(str(outputs.get("lineage_graph_md")))
+        if outputs.get("lineage_graph_md")
+        else archive_dir / "result_archive_lineage_graph.md"
+    )
+    report_md = Path(str(outputs.get("report_md"))) if outputs.get("report_md") else archive_dir / "result_archive_report.md"
+
+    if runs_csv.exists():
+        run_archive_df = _load_csv(runs_csv)
+        if run_archive_df is not None and not run_archive_df.empty:
+            st.caption("最近归档运行")
+            st.dataframe(run_archive_df.head(100), use_container_width=True, hide_index=True)
+        st.download_button(
+            label="下载运行归档索引 CSV",
+            data=runs_csv.read_bytes(),
+            file_name=runs_csv.name,
+            mime="text/csv",
+            use_container_width=True,
+            key="download_result_archive_runs_csv",
+        )
+    if trends_csv.exists():
+        trend_df = _load_csv(trends_csv)
+        if trend_df is not None and not trend_df.empty:
+            st.caption("验证回灌再训练长期趋势")
+            chart_columns = [
+                column
+                for column in ["label_valid_delta", "calibrated_rank_spearman_delta", "best_val_loss_delta"]
+                if column in trend_df.columns and pd.to_numeric(trend_df[column], errors="coerce").notna().any()
+            ]
+            if chart_columns and "comparison_name" in trend_df.columns:
+                chart_df = trend_df.loc[:, ["comparison_name"] + chart_columns].copy()
+                for column in chart_columns:
+                    chart_df[column] = pd.to_numeric(chart_df[column], errors="coerce")
+                st.bar_chart(chart_df.set_index("comparison_name"), height=260)
+            st.dataframe(trend_df.head(100), use_container_width=True, hide_index=True)
+        st.download_button(
+            label="下载再训练长期趋势 CSV",
+            data=trends_csv.read_bytes(),
+            file_name=trends_csv.name,
+            mime="text/csv",
+            use_container_width=True,
+            key="download_result_archive_validation_trends_csv",
+        )
+    if lineage_csv.exists():
+        lineage_df = _load_csv(lineage_csv)
+        if lineage_df is not None and not lineage_df.empty:
+            st.caption("跨批次 lineage")
+            st.dataframe(lineage_df.head(100), use_container_width=True, hide_index=True)
+        st.download_button(
+            label="下载跨批次 lineage CSV",
+            data=lineage_csv.read_bytes(),
+            file_name=lineage_csv.name,
+            mime="text/csv",
+            use_container_width=True,
+            key="download_result_archive_lineage_csv",
+        )
+    if lineage_graph_html.exists():
+        st.download_button(
+            label="下载 lineage 图形化 HTML",
+            data=lineage_graph_html.read_bytes(),
+            file_name=lineage_graph_html.name,
+            mime="text/html",
+            use_container_width=True,
+            key="download_result_archive_lineage_graph_html",
+        )
+        with st.expander("预览 lineage 图形化结果"):
+            st.components.v1.html(_read_text(lineage_graph_html), height=620, scrolling=True)
+    if lineage_graph_json.exists():
+        st.download_button(
+            label="下载 lineage graph JSON",
+            data=lineage_graph_json.read_bytes(),
+            file_name=lineage_graph_json.name,
+            mime="application/json",
+            use_container_width=True,
+            key="download_result_archive_lineage_graph_json",
+        )
+    if lineage_graph_md.exists():
+        st.download_button(
+            label="下载 lineage graph Markdown",
+            data=lineage_graph_md.read_bytes(),
+            file_name=lineage_graph_md.name,
+            mime="text/markdown",
+            use_container_width=True,
+            key="download_result_archive_lineage_graph_md",
+        )
+    if artifacts_csv.exists():
+        st.download_button(
+            label="下载产物 manifest CSV",
+            data=artifacts_csv.read_bytes(),
+            file_name=artifacts_csv.name,
+            mime="text/csv",
+            use_container_width=True,
+            key="download_result_archive_artifact_manifest_csv",
+        )
+    if report_md.exists():
+        st.download_button(
+            label="下载归档 Markdown 报告",
+            data=report_md.read_bytes(),
+            file_name=report_md.name,
+            mime="text/markdown",
+            use_container_width=True,
+            key="download_result_archive_report_md",
+        )
+        with st.expander("预览归档 Markdown 报告"):
+            st.markdown(_read_text(report_md))
+
+    if st.button("打开结果归档目录", use_container_width=True, key="open_result_archive_dir"):
+        ok, message = _open_local_path(archive_dir)
+        if ok:
+            st.success(message)
+        else:
+            st.error(message)
 
 
 def _compute_directory_size(path: Path) -> int:
@@ -4255,6 +6382,35 @@ def _format_compare_batch_table_for_display(
     )
 
 
+def _build_compare_export_scope_lines(
+    *,
+    compare_view_df: pd.DataFrame | None = None,
+    compare_export_df: pd.DataFrame | None = None,
+    batch_view_df: pd.DataFrame | None = None,
+    batch_export_df: pd.DataFrame | None = None,
+    delta_view_df: pd.DataFrame | None = None,
+    delta_export_df: pd.DataFrame | None = None,
+    attribution_view_df: pd.DataFrame | None = None,
+    attribution_export_df: pd.DataFrame | None = None,
+) -> list[str]:
+    table_specs = [
+        ("完整对比表", compare_view_df, compare_export_df),
+        ("跨批次趋势聚合", batch_view_df, batch_export_df),
+        ("相对基准的差异表", delta_view_df, delta_export_df),
+        ("差异归因总表", attribution_view_df, attribution_export_df),
+    ]
+    lines: list[str] = []
+    for label, view_df, export_df in table_specs:
+        if not isinstance(view_df, pd.DataFrame) or view_df.empty:
+            continue
+        filtered_row_count = len(export_df) if isinstance(export_df, pd.DataFrame) else len(view_df)
+        lines.append(
+            f"{label} 已同步当前页面视图：展示 {len(view_df)} 行、{len(view_df.columns)} 列；"
+            f"当前筛选后共有 {filtered_row_count} 行。"
+        )
+    return lines
+
+
 def _create_history_compare_html_export(
     selected_records: list[dict[str, Any]],
     compare_df: pd.DataFrame,
@@ -4272,6 +6428,14 @@ def _create_history_compare_html_export(
     batch_insight_lines: list[str] | None = None,
     attribution_df: pd.DataFrame | None = None,
     attribution_payloads: dict[str, dict[str, Any]] | None = None,
+    compare_view_df: pd.DataFrame | None = None,
+    compare_export_df: pd.DataFrame | None = None,
+    batch_view_df: pd.DataFrame | None = None,
+    batch_export_df: pd.DataFrame | None = None,
+    delta_view_df: pd.DataFrame | None = None,
+    delta_export_df: pd.DataFrame | None = None,
+    attribution_view_df: pd.DataFrame | None = None,
+    attribution_export_df: pd.DataFrame | None = None,
 ) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     export_dir = COMPARE_EXPORT_ROOT / stamp
@@ -4321,10 +6485,29 @@ def _create_history_compare_html_export(
     batch_insight_lines_html = "".join(
         f"<li>{html.escape(line)}</li>" for line in (batch_insight_lines or [])
     )
-    delta_table_html = _df_to_html_table(delta_df, max_rows=max(20, len(delta_df) if isinstance(delta_df, pd.DataFrame) else 20))
+    compare_scope_lines = _build_compare_export_scope_lines(
+        compare_view_df=compare_view_df,
+        compare_export_df=compare_export_df,
+        batch_view_df=batch_view_df,
+        batch_export_df=batch_export_df,
+        delta_view_df=delta_view_df,
+        delta_export_df=delta_export_df,
+        attribution_view_df=attribution_view_df,
+        attribution_export_df=attribution_export_df,
+    )
+    compare_scope_html = "".join(f"<li>{html.escape(line)}</li>" for line in compare_scope_lines)
+    compare_view_df = compare_view_df if isinstance(compare_view_df, pd.DataFrame) else compare_df
+    compare_export_df = compare_export_df if isinstance(compare_export_df, pd.DataFrame) else compare_df
+    batch_view_df = batch_view_df if isinstance(batch_view_df, pd.DataFrame) else batch_df
+    batch_export_df = batch_export_df if isinstance(batch_export_df, pd.DataFrame) else batch_df
+    delta_view_df = delta_view_df if isinstance(delta_view_df, pd.DataFrame) else delta_df
+    delta_export_df = delta_export_df if isinstance(delta_export_df, pd.DataFrame) else delta_df
+    attribution_view_df = attribution_view_df if isinstance(attribution_view_df, pd.DataFrame) else attribution_df
+    attribution_export_df = attribution_export_df if isinstance(attribution_export_df, pd.DataFrame) else attribution_df
+    delta_table_html = _df_to_html_table(delta_view_df, max_rows=max(20, len(delta_view_df) if isinstance(delta_view_df, pd.DataFrame) else 20))
     trend_table_html = _df_to_html_table(trend_df, max_rows=max(20, len(trend_df) if isinstance(trend_df, pd.DataFrame) else 20))
-    batch_table_html = _df_to_html_table(batch_df, max_rows=max(20, len(batch_df) if isinstance(batch_df, pd.DataFrame) else 20))
-    attribution_table_html = _df_to_html_table(attribution_df, max_rows=max(20, len(attribution_df) if isinstance(attribution_df, pd.DataFrame) else 20))
+    batch_table_html = _df_to_html_table(batch_view_df, max_rows=max(20, len(batch_view_df) if isinstance(batch_view_df, pd.DataFrame) else 20))
+    attribution_table_html = _df_to_html_table(attribution_view_df, max_rows=max(20, len(attribution_view_df) if isinstance(attribution_view_df, pd.DataFrame) else 20))
     attribution_payloads = attribution_payloads if isinstance(attribution_payloads, dict) else {}
     attribution_detail_html_parts: list[str] = []
     for run_name, payload in attribution_payloads.items():
@@ -4371,6 +6554,11 @@ def _create_history_compare_html_export(
     </section>
 
     <section class="section">
+      <h2>当前页面视图同步说明</h2>
+      {"<ul>" + compare_scope_html + "</ul>" if compare_scope_html else "<p class='muted'>当前没有可同步的表格视图。</p>"}
+    </section>
+
+    <section class="section">
       <h2>基准差异解释</h2>
       {"<ul>" + insight_lines_html + "</ul>" if insight_lines_html else "<p class='muted'>当前没有可用的差异解释。</p>"}
     </section>
@@ -4381,7 +6569,7 @@ def _create_history_compare_html_export(
     </section>
 
     <section class="section">
-      <h2>跨批次趋势聚合</h2>
+      <h2>跨批次趋势聚合（当前页面视图）</h2>
       {batch_table_html}
     </section>
 
@@ -4391,12 +6579,12 @@ def _create_history_compare_html_export(
     </section>
 
     <section class="section">
-      <h2>相对基准的差异表</h2>
+      <h2>相对基准的差异表（当前页面视图）</h2>
       {delta_table_html}
     </section>
 
     <section class="section">
-      <h2>更细的差异归因总表</h2>
+      <h2>更细的差异归因总表（当前页面视图）</h2>
       {attribution_table_html}
     </section>
 
@@ -4406,8 +6594,8 @@ def _create_history_compare_html_export(
     </section>
 
     <section class="section">
-      <h2>完整对比表</h2>
-      {_df_to_html_table(compare_df, max_rows=max(20, len(compare_df)))}
+      <h2>完整对比表（当前页面视图）</h2>
+      {_df_to_html_table(compare_view_df, max_rows=max(20, len(compare_view_df)))}
     </section>
 
     <div class="footer">
@@ -4415,14 +6603,23 @@ def _create_history_compare_html_export(
     </div>
   </div>
 </body>
-</html>
+    </html>
 """
     _write_text(html_path, html_text)
-    csv_path = export_dir / "history_compare_table.csv"
-    csv_path.write_text(compare_df.to_csv(index=False), encoding="utf-8")
-    if isinstance(batch_df, pd.DataFrame) and not batch_df.empty:
-        batch_csv_path = export_dir / "history_compare_batch_table.csv"
-        batch_csv_path.write_text(batch_df.to_csv(index=False), encoding="utf-8")
+    (export_dir / "history_compare_table_view.csv").write_text(compare_view_df.to_csv(index=False), encoding="utf-8")
+    (export_dir / "history_compare_table.csv").write_text(compare_export_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(batch_view_df, pd.DataFrame) and not batch_view_df.empty:
+        (export_dir / "history_compare_batch_table_view.csv").write_text(batch_view_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(batch_export_df, pd.DataFrame) and not batch_export_df.empty:
+        (export_dir / "history_compare_batch_table.csv").write_text(batch_export_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(delta_view_df, pd.DataFrame) and not delta_view_df.empty:
+        (export_dir / "history_compare_delta_view.csv").write_text(delta_view_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(delta_export_df, pd.DataFrame) and not delta_export_df.empty:
+        (export_dir / "history_compare_delta_table.csv").write_text(delta_export_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(attribution_view_df, pd.DataFrame) and not attribution_view_df.empty:
+        (export_dir / "history_compare_attribution_view.csv").write_text(attribution_view_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(attribution_export_df, pd.DataFrame) and not attribution_export_df.empty:
+        (export_dir / "history_compare_attribution_table.csv").write_text(attribution_export_df.to_csv(index=False), encoding="utf-8")
     return html_path
 
 
@@ -4443,6 +6640,14 @@ def _create_history_compare_pdf_export(
     batch_insight_lines: list[str] | None = None,
     attribution_df: pd.DataFrame | None = None,
     attribution_payloads: dict[str, dict[str, Any]] | None = None,
+    compare_view_df: pd.DataFrame | None = None,
+    compare_export_df: pd.DataFrame | None = None,
+    batch_view_df: pd.DataFrame | None = None,
+    batch_export_df: pd.DataFrame | None = None,
+    delta_view_df: pd.DataFrame | None = None,
+    delta_export_df: pd.DataFrame | None = None,
+    attribution_view_df: pd.DataFrame | None = None,
+    attribution_export_df: pd.DataFrame | None = None,
 ) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     export_dir = COMPARE_EXPORT_ROOT / stamp
@@ -4463,6 +6668,24 @@ def _create_history_compare_pdf_export(
         & pd.to_numeric(compare_df.get("failed_rows"), errors="coerce").fillna(0).eq(0)
         & pd.to_numeric(compare_df.get("warning_rows"), errors="coerce").fillna(0).eq(0)
     )
+    compare_scope_lines = _build_compare_export_scope_lines(
+        compare_view_df=compare_view_df,
+        compare_export_df=compare_export_df,
+        batch_view_df=batch_view_df,
+        batch_export_df=batch_export_df,
+        delta_view_df=delta_view_df,
+        delta_export_df=delta_export_df,
+        attribution_view_df=attribution_view_df,
+        attribution_export_df=attribution_export_df,
+    )
+    compare_view_df = compare_view_df if isinstance(compare_view_df, pd.DataFrame) else compare_df
+    compare_export_df = compare_export_df if isinstance(compare_export_df, pd.DataFrame) else compare_df
+    batch_view_df = batch_view_df if isinstance(batch_view_df, pd.DataFrame) else batch_df
+    batch_export_df = batch_export_df if isinstance(batch_export_df, pd.DataFrame) else batch_df
+    delta_view_df = delta_view_df if isinstance(delta_view_df, pd.DataFrame) else delta_df
+    delta_export_df = delta_export_df if isinstance(delta_export_df, pd.DataFrame) else delta_df
+    attribution_view_df = attribution_view_df if isinstance(attribution_view_df, pd.DataFrame) else attribution_df
+    attribution_export_df = attribution_export_df if isinstance(attribution_export_df, pd.DataFrame) else attribution_df
     attribution_payloads = attribution_payloads if isinstance(attribution_payloads, dict) else {}
     attribution_detail_lines: list[str] = []
     for run_name, payload in attribution_payloads.items():
@@ -4487,6 +6710,11 @@ def _create_history_compare_pdf_export(
             ],
         },
         {"title": "选中的运行", "kind": "bullets", "lines": selected_lines or ["当前没有选中运行。"]},
+        {
+            "title": "当前页面视图同步说明",
+            "kind": "bullets",
+            "lines": compare_scope_lines or ["当前没有可同步的表格视图。"],
+        },
         {"title": "Run-to-Run 差异解释", "kind": "bullets", "lines": insight_lines or ["当前没有可用的差异解释。"]},
         {
             "title": "趋势快照",
@@ -4494,9 +6722,9 @@ def _create_history_compare_pdf_export(
             "lines": _df_to_pdf_lines(trend_df, max_rows=max(20, len(trend_df) if isinstance(trend_df, pd.DataFrame) else 20), max_cols=6),
         },
         {
-            "title": "跨批次趋势聚合",
+            "title": "跨批次趋势聚合（当前页面视图）",
             "kind": "table",
-            "lines": _df_to_pdf_lines(batch_df, max_rows=max(20, len(batch_df) if isinstance(batch_df, pd.DataFrame) else 20), max_cols=8),
+            "lines": _df_to_pdf_lines(batch_view_df, max_rows=max(20, len(batch_view_df) if isinstance(batch_view_df, pd.DataFrame) else 20), max_cols=8),
         },
         {
             "title": "批次级观察",
@@ -4504,14 +6732,14 @@ def _create_history_compare_pdf_export(
             "lines": batch_insight_lines or ["当前没有可用的批次级观察。"],
         },
         {
-            "title": "相对基准的差异表",
+            "title": "相对基准的差异表（当前页面视图）",
             "kind": "table",
-            "lines": _df_to_pdf_lines(delta_df, max_rows=max(20, len(delta_df) if isinstance(delta_df, pd.DataFrame) else 20), max_cols=10),
+            "lines": _df_to_pdf_lines(delta_view_df, max_rows=max(20, len(delta_view_df) if isinstance(delta_view_df, pd.DataFrame) else 20), max_cols=10),
         },
         {
-            "title": "更细的差异归因总表",
+            "title": "更细的差异归因总表（当前页面视图）",
             "kind": "table",
-            "lines": _df_to_pdf_lines(attribution_df, max_rows=max(20, len(attribution_df) if isinstance(attribution_df, pd.DataFrame) else 20), max_cols=6),
+            "lines": _df_to_pdf_lines(attribution_view_df, max_rows=max(20, len(attribution_view_df) if isinstance(attribution_view_df, pd.DataFrame) else 20), max_cols=6),
         },
         {
             "title": "运行级归因明细",
@@ -4519,17 +6747,26 @@ def _create_history_compare_pdf_export(
             "lines": attribution_detail_lines or ["当前没有可展示的归因明细。"],
         },
         {
-            "title": "完整对比表",
+            "title": "完整对比表（当前页面视图）",
             "kind": "table",
-            "lines": _df_to_pdf_lines(compare_df, max_rows=max(20, len(compare_df)), max_cols=10),
+            "lines": _df_to_pdf_lines(compare_view_df, max_rows=max(20, len(compare_view_df)), max_cols=10),
         },
     ]
 
-    csv_path = export_dir / "history_compare_table.csv"
-    csv_path.write_text(compare_df.to_csv(index=False), encoding="utf-8")
-    if isinstance(batch_df, pd.DataFrame) and not batch_df.empty:
-        batch_csv_path = export_dir / "history_compare_batch_table.csv"
-        batch_csv_path.write_text(batch_df.to_csv(index=False), encoding="utf-8")
+    (export_dir / "history_compare_table_view.csv").write_text(compare_view_df.to_csv(index=False), encoding="utf-8")
+    (export_dir / "history_compare_table.csv").write_text(compare_export_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(batch_view_df, pd.DataFrame) and not batch_view_df.empty:
+        (export_dir / "history_compare_batch_table_view.csv").write_text(batch_view_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(batch_export_df, pd.DataFrame) and not batch_export_df.empty:
+        (export_dir / "history_compare_batch_table.csv").write_text(batch_export_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(delta_view_df, pd.DataFrame) and not delta_view_df.empty:
+        (export_dir / "history_compare_delta_view.csv").write_text(delta_view_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(delta_export_df, pd.DataFrame) and not delta_export_df.empty:
+        (export_dir / "history_compare_delta_table.csv").write_text(delta_export_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(attribution_view_df, pd.DataFrame) and not attribution_view_df.empty:
+        (export_dir / "history_compare_attribution_view.csv").write_text(attribution_view_df.to_csv(index=False), encoding="utf-8")
+    if isinstance(attribution_export_df, pd.DataFrame) and not attribution_export_df.empty:
+        (export_dir / "history_compare_attribution_table.csv").write_text(attribution_export_df.to_csv(index=False), encoding="utf-8")
     return _build_pdf_document(
         pdf_path,
         title=f"{APP_NAME} 多运行对比自动化 PDF",
@@ -4671,6 +6908,14 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         if series.notna().any():
             trend_columns.append(column)
     trend_df = pd.DataFrame()
+    batch_view_df = pd.DataFrame()
+    batch_export_df = pd.DataFrame()
+    attribution_view_df = pd.DataFrame()
+    attribution_export_df = pd.DataFrame()
+    delta_view_df = pd.DataFrame()
+    delta_export_df = pd.DataFrame()
+    compare_view_df = pd.DataFrame()
+    compare_export_df = pd.DataFrame()
     if trend_columns:
         trend_df = ordered_compare_df.loc[:, ["started_at", "run_name"] + trend_columns].copy()
         trend_df["timeline_label"] = (
@@ -4921,110 +7166,149 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             key="download_compare_delta_csv",
         )
 
-    export_col1, export_col2, export_col3 = st.columns(3)
-    create_compare_html_clicked = export_col1.button(
-        "生成当前对比 HTML",
-        use_container_width=True,
-        key="create_compare_html_clicked",
-    )
-    create_compare_pdf_clicked = export_col2.button(
-        "生成当前对比 PDF",
-        use_container_width=True,
-        key="create_compare_pdf_clicked",
-    )
-    if create_compare_html_clicked:
-        with st.spinner("正在生成多运行对比 HTML..."):
-            html_path = _create_history_compare_html_export(
-                selected_records,
-                compare_df,
-                metric_key=metric_key,
-                metric_label=_get_compare_metric_label(metric_key),
-                higher_is_better=higher_is_better,
-                leader_name=leader_name,
-                leader_value=leader_value,
-                baseline_run_name=baseline_run_name,
-                insight_lines=insight_lines,
-                delta_df=delta_df,
-                trend_df=trend_df,
-                batch_df=batch_display_df,
-                batch_insight_lines=batch_insight_lines,
-                attribution_df=attribution_df,
-                attribution_payloads=attribution_payloads,
+    with st.expander("验证回灌再训练前后对照报告", expanded=False):
+        st.caption(
+            "用于比较“回灌前基准运行”和“使用 experiment_label 后重新运行”的变化；"
+            "只读取两个运行的 summary / consensus ranking，不改动已有结果。"
+        )
+        run_name_to_root = {
+            Path(str(record.get("run_root"))).name: Path(str(record.get("run_root")))
+            for record in selected_records
+            if str(record.get("run_root") or "").strip()
+        }
+        after_options = [name for name in baseline_options if str(name) != str(baseline_run_name)]
+        if not after_options:
+            st.info("至少需要选择两个历史运行，才能生成验证回灌再训练对照报告。")
+        else:
+            after_run_name = st.selectbox(
+                "回灌后运行",
+                options=after_options,
+                index=max(0, len(after_options) - 1),
+                key="validation_retrain_compare_after_run",
             )
-        st.session_state["last_compare_export_html"] = str(html_path)
-        st.session_state["last_compare_export_html_message"] = f"已生成多运行对比 HTML: {html_path}"
-    if create_compare_pdf_clicked:
-        with st.spinner("正在生成多运行对比 PDF..."):
-            pdf_path = _create_history_compare_pdf_export(
-                selected_records,
-                compare_df,
-                metric_key=metric_key,
-                metric_label=_get_compare_metric_label(metric_key),
-                higher_is_better=higher_is_better,
-                leader_name=leader_name,
-                leader_value=leader_value,
-                baseline_run_name=baseline_run_name,
-                insight_lines=insight_lines,
-                delta_df=delta_df,
-                trend_df=trend_df,
-                batch_df=batch_display_df,
-                batch_insight_lines=batch_insight_lines,
-                attribution_df=attribution_df,
-                attribution_payloads=attribution_payloads,
+            default_validation_labels = LOCAL_APP_RUN_ROOT / "experiment_validation_feedback" / "experiment_validation_labels.csv"
+            if (
+                not str(st.session_state.get("validation_retrain_compare_labels_csv_path") or "").strip()
+                and default_validation_labels.exists()
+            ):
+                st.session_state["validation_retrain_compare_labels_csv_path"] = str(default_validation_labels)
+            st.text_input(
+                "可选 validation labels CSV",
+                key="validation_retrain_compare_labels_csv_path",
+                help="通常是 local_app_runs/experiment_validation_feedback/experiment_validation_labels.csv；填写后会标记已验证候选在 top-k 中的变化。",
             )
-        st.session_state["last_compare_export_pdf"] = str(pdf_path)
-        st.session_state["last_compare_export_pdf_message"] = f"已生成多运行对比 PDF: {pdf_path}"
+            st.number_input(
+                "top_k",
+                min_value=1,
+                max_value=200,
+                step=1,
+                key="validation_retrain_compare_top_k",
+            )
+            before_root = run_name_to_root.get(str(baseline_run_name))
+            after_root = run_name_to_root.get(str(after_run_name))
+            safe_pair_name = f"{_slugify_name(str(baseline_run_name))}__vs__{_slugify_name(str(after_run_name))}"
+            retrain_compare_out = LOCAL_APP_RUN_ROOT / "validation_retrain_comparisons" / safe_pair_name
+            generate_retrain_compare_clicked = st.button(
+                "生成验证回灌再训练对照报告",
+                use_container_width=True,
+                key="generate_validation_retrain_comparison",
+            )
+            if generate_retrain_compare_clicked:
+                try:
+                    if before_root is None or after_root is None:
+                        raise ValueError("无法定位所选运行目录。")
+                    labels_path_text = str(st.session_state.get("validation_retrain_compare_labels_csv_path") or "").strip()
+                    comparison_summary = build_validation_retrain_comparison(
+                        before_summary=before_root / "outputs" / "recommended_pipeline_summary.json",
+                        after_summary=after_root / "outputs" / "recommended_pipeline_summary.json",
+                        out_dir=retrain_compare_out,
+                        validation_labels_csv=labels_path_text or None,
+                        top_k=int(st.session_state.get("validation_retrain_compare_top_k") or 10),
+                    )
+                    st.session_state["last_validation_retrain_comparison"] = comparison_summary
+                    st.success(f"已生成验证回灌再训练对照报告: {retrain_compare_out}")
+                except Exception as exc:
+                    st.error(f"生成验证回灌再训练对照报告失败: {exc}")
 
-    last_compare_export_html = st.session_state.get("last_compare_export_html")
-    last_compare_export_html_message = str(st.session_state.get("last_compare_export_html_message") or "")
-    last_compare_export_pdf = st.session_state.get("last_compare_export_pdf")
-    last_compare_export_pdf_message = str(st.session_state.get("last_compare_export_pdf_message") or "")
-    if last_compare_export_html_message:
-        st.success(last_compare_export_html_message)
-    if last_compare_export_html and Path(str(last_compare_export_html)).exists():
-        compare_html_path = Path(str(last_compare_export_html))
-        st.caption(f"当前多运行对比 HTML: {compare_html_path}")
-        export_col1.download_button(
-            label="下载当前对比 HTML",
-            data=compare_html_path.read_bytes(),
-            file_name=compare_html_path.name,
-            mime="text/html",
-            use_container_width=True,
-        )
-        if export_col3.button("打开当前对比 HTML", use_container_width=True, key="open_compare_html_clicked"):
-            ok, message = _open_local_path(compare_html_path)
-            if ok:
-                st.success(message)
-            else:
-                st.error(message)
-    if last_compare_export_pdf_message:
-        st.success(last_compare_export_pdf_message)
-    if last_compare_export_pdf and Path(str(last_compare_export_pdf)).exists():
-        compare_pdf_path = Path(str(last_compare_export_pdf))
-        st.caption(f"当前多运行对比 PDF: {compare_pdf_path}")
-        pdf_download_col1, pdf_download_col2 = st.columns(2)
-        pdf_download_col1.download_button(
-            label="下载当前对比 PDF",
-            data=compare_pdf_path.read_bytes(),
-            file_name=compare_pdf_path.name,
-            mime="application/pdf",
-            use_container_width=True,
-        )
-        if pdf_download_col2.button("打开当前对比 PDF", use_container_width=True, key="open_compare_pdf_clicked"):
-            ok, message = _open_local_path(compare_pdf_path)
-            if ok:
-                st.success(message)
-            else:
-                st.error(message)
+            comparison_summary_path = retrain_compare_out / "validation_retrain_comparison_summary.json"
+            comparison_summary = _load_json(comparison_summary_path) or {}
+            if not comparison_summary:
+                last_comparison_summary = st.session_state.get("last_validation_retrain_comparison", {})
+                last_outputs = (
+                    last_comparison_summary.get("outputs")
+                    if isinstance(last_comparison_summary, dict) and isinstance(last_comparison_summary.get("outputs"), dict)
+                    else {}
+                )
+                last_summary_path = str(last_outputs.get("summary_json") or "")
+                if last_summary_path and Path(last_summary_path).parent == retrain_compare_out:
+                    comparison_summary = last_comparison_summary
+            if isinstance(comparison_summary, dict) and comparison_summary:
+                overlap = comparison_summary.get("top_k_overlap") if isinstance(comparison_summary.get("top_k_overlap"), dict) else {}
+                rt_col1, rt_col2, rt_col3 = st.columns(3)
+                rt_col1.metric("Top-k 重叠", int(overlap.get("overlap_count") or 0))
+                overlap_fraction = _coerce_float(overlap.get("fraction"))
+                rt_col2.metric("Top-k overlap fraction", _fmt_metric(overlap_fraction))
+                validated_top_k_count = comparison_summary.get("validated_top_k_count")
+                rt_col3.metric(
+                    "回灌后 Top-k 已验证",
+                    "N/A" if validated_top_k_count is None else int(validated_top_k_count),
+                )
+                outputs = comparison_summary.get("outputs") if isinstance(comparison_summary.get("outputs"), dict) else {}
+                metric_path = Path(str(outputs.get("metric_comparison_csv"))) if outputs.get("metric_comparison_csv") else None
+                rank_delta_path = (
+                    Path(str(outputs.get("candidate_rank_delta_csv")))
+                    if outputs.get("candidate_rank_delta_csv")
+                    else None
+                )
+                report_path = Path(str(outputs.get("report_md"))) if outputs.get("report_md") else None
+                if metric_path is not None and metric_path.exists():
+                    metric_df = _load_csv(metric_path)
+                    if metric_df is not None:
+                        st.caption("关键指标对照")
+                        st.dataframe(metric_df, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        label="下载指标对照 CSV",
+                        data=metric_path.read_bytes(),
+                        file_name=metric_path.name,
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_validation_retrain_metrics_csv",
+                    )
+                if rank_delta_path is not None and rank_delta_path.exists():
+                    rank_delta_df = _load_csv(rank_delta_path)
+                    if rank_delta_df is not None:
+                        st.caption("候选排名变化")
+                        st.dataframe(rank_delta_df.head(100), use_container_width=True, hide_index=True)
+                    st.download_button(
+                        label="下载候选排名变化 CSV",
+                        data=rank_delta_path.read_bytes(),
+                        file_name=rank_delta_path.name,
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_validation_retrain_rank_delta_csv",
+                    )
+                if report_path is not None and report_path.exists():
+                    st.download_button(
+                        label="下载 Markdown 对照报告",
+                        data=report_path.read_bytes(),
+                        file_name=report_path.name,
+                        mime="text/markdown",
+                        use_container_width=True,
+                        key="download_validation_retrain_report_md",
+                    )
+                    with st.expander("预览 Markdown 对照报告"):
+                        st.markdown(_read_text(report_path))
+
+    compare_export_container = st.container()
 
     st.subheader("完整对比表")
-    compare_df, compare_threshold_summaries = _render_numeric_threshold_filters(
+    compare_filtered_df, compare_threshold_summaries = _render_numeric_threshold_filters(
         compare_df,
         key_prefix="compare_main_threshold",
         title="完整对比表数值阈值筛选",
     )
     compare_view_df, compare_export_df = _render_dataframe_view_controls(
-        compare_df,
+        compare_filtered_df,
         key_prefix="compare_main_table",
         preferred_columns=[
             "run_name",
@@ -5038,8 +7322,8 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
             "warning_rows",
             "feature_count",
         ],
-        default_sort_column=metric_key if metric_key in compare_df.columns else "started_at",
-        default_descending=higher_is_better if metric_key in compare_df.columns else False,
+        default_sort_column=metric_key if metric_key in compare_filtered_df.columns else "started_at",
+        default_descending=higher_is_better if metric_key in compare_filtered_df.columns else False,
     )
     if compare_threshold_summaries:
         st.caption("已启用阈值: " + "；".join(compare_threshold_summaries))
@@ -5065,6 +7349,148 @@ def _render_history_compare_panel(history_records: list[dict[str, Any]]) -> None
         use_container_width=True,
         key="download_compare_main_csv",
     )
+
+    with compare_export_container:
+        st.subheader("运行对比导出")
+        st.caption(
+            "这里生成的 HTML / PDF 会同步当前页面四张表的显示列、排序和数值阈值筛选结果；"
+            "导出目录中也会附带当前可见视图 CSV 与全筛选结果 CSV。"
+        )
+        last_compare_export_html = st.session_state.get("last_compare_export_html")
+        last_compare_export_html_message = str(st.session_state.get("last_compare_export_html_message") or "")
+        last_compare_export_pdf = st.session_state.get("last_compare_export_pdf")
+        last_compare_export_pdf_message = str(st.session_state.get("last_compare_export_pdf_message") or "")
+
+        compare_bundle_col1, compare_bundle_col2, compare_bundle_col3 = st.columns(3)
+        create_compare_html_clicked = compare_bundle_col1.button(
+            "生成当前对比 HTML",
+            use_container_width=True,
+            key="create_history_compare_html_export",
+        )
+        create_compare_pdf_clicked = compare_bundle_col2.button(
+            "生成当前对比 PDF",
+            use_container_width=True,
+            key="create_history_compare_pdf_export",
+        )
+        open_compare_export_dir_clicked = compare_bundle_col3.button(
+            "打开对比导出目录",
+            use_container_width=True,
+            key="open_history_compare_export_dir",
+        )
+
+        if create_compare_html_clicked:
+            with st.spinner("正在生成当前运行对比 HTML..."):
+                compare_html_path = _create_history_compare_html_export(
+                    selected_records,
+                    compare_df,
+                    metric_key=metric_key,
+                    metric_label=_get_compare_metric_label(metric_key),
+                    higher_is_better=higher_is_better,
+                    leader_name=leader_name,
+                    leader_value=leader_value,
+                    baseline_run_name=baseline_run_name,
+                    insight_lines=insight_lines,
+                    delta_df=delta_export_df,
+                    trend_df=trend_df,
+                    batch_df=batch_export_df,
+                    batch_insight_lines=batch_insight_lines,
+                    attribution_df=attribution_export_df,
+                    attribution_payloads=attribution_payloads,
+                    compare_view_df=compare_view_df,
+                    compare_export_df=compare_export_df,
+                    batch_view_df=batch_view_df,
+                    batch_export_df=batch_export_df,
+                    delta_view_df=delta_view_df,
+                    delta_export_df=delta_export_df,
+                    attribution_view_df=attribution_view_df,
+                    attribution_export_df=attribution_export_df,
+                )
+            st.session_state["last_compare_export_html"] = str(compare_html_path)
+            st.session_state["last_compare_export_html_message"] = f"已生成运行对比 HTML: {compare_html_path}"
+            last_compare_export_html = str(compare_html_path)
+            last_compare_export_html_message = str(st.session_state["last_compare_export_html_message"])
+
+        if create_compare_pdf_clicked:
+            with st.spinner("正在生成当前运行对比 PDF..."):
+                compare_pdf_path = _create_history_compare_pdf_export(
+                    selected_records,
+                    compare_df,
+                    metric_key=metric_key,
+                    metric_label=_get_compare_metric_label(metric_key),
+                    higher_is_better=higher_is_better,
+                    leader_name=leader_name,
+                    leader_value=leader_value,
+                    baseline_run_name=baseline_run_name,
+                    insight_lines=insight_lines,
+                    delta_df=delta_export_df,
+                    trend_df=trend_df,
+                    batch_df=batch_export_df,
+                    batch_insight_lines=batch_insight_lines,
+                    attribution_df=attribution_export_df,
+                    attribution_payloads=attribution_payloads,
+                    compare_view_df=compare_view_df,
+                    compare_export_df=compare_export_df,
+                    batch_view_df=batch_view_df,
+                    batch_export_df=batch_export_df,
+                    delta_view_df=delta_view_df,
+                    delta_export_df=delta_export_df,
+                    attribution_view_df=attribution_view_df,
+                    attribution_export_df=attribution_export_df,
+                )
+            st.session_state["last_compare_export_pdf"] = str(compare_pdf_path)
+            st.session_state["last_compare_export_pdf_message"] = f"已生成运行对比 PDF: {compare_pdf_path}"
+            last_compare_export_pdf = str(compare_pdf_path)
+            last_compare_export_pdf_message = str(st.session_state["last_compare_export_pdf_message"])
+
+        if open_compare_export_dir_clicked:
+            COMPARE_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
+            ok, message = _open_local_path(COMPARE_EXPORT_ROOT)
+            if ok:
+                st.success(message)
+            else:
+                st.error(message)
+
+        if last_compare_export_html_message:
+            st.success(last_compare_export_html_message)
+        if last_compare_export_html and Path(str(last_compare_export_html)).exists():
+            compare_html_path = Path(str(last_compare_export_html))
+            st.caption(f"当前运行对比 HTML: {compare_html_path}")
+            compare_html_col1, compare_html_col2 = st.columns(2)
+            compare_html_col1.download_button(
+                label="下载当前运行对比 HTML",
+                data=compare_html_path.read_bytes(),
+                file_name=compare_html_path.name,
+                mime="text/html",
+                use_container_width=True,
+                key="download_history_compare_html_export",
+            )
+            if compare_html_col2.button("打开当前运行对比 HTML", use_container_width=True, key="open_history_compare_html_export"):
+                ok, message = _open_local_path(compare_html_path)
+                if ok:
+                    st.success(message)
+                else:
+                    st.error(message)
+
+        if last_compare_export_pdf_message:
+            st.success(last_compare_export_pdf_message)
+        if last_compare_export_pdf and Path(str(last_compare_export_pdf)).exists():
+            compare_pdf_path = Path(str(last_compare_export_pdf))
+            st.caption(f"当前运行对比 PDF: {compare_pdf_path}")
+            compare_pdf_col1, compare_pdf_col2 = st.columns(2)
+            compare_pdf_col1.download_button(
+                label="下载当前运行对比 PDF",
+                data=compare_pdf_path.read_bytes(),
+                file_name=compare_pdf_path.name,
+                mime="application/pdf",
+                use_container_width=True,
+                key="download_history_compare_pdf_export",
+            )
+            if compare_pdf_col2.button("打开当前运行对比 PDF", use_container_width=True, key="open_history_compare_pdf_export"):
+                ok, message = _open_local_path(compare_pdf_path)
+                if ok:
+                    st.success(message)
+                else:
+                    st.error(message)
 
 
 def _build_failure_diagnostics(
@@ -5100,6 +7526,11 @@ def _build_failure_diagnostics(
         category = "missing_python_dependency"
         messages.append("Python 依赖缺失，运行环境未满足当前流程要求。")
         suggestions.append("先执行 `pip install -r requirements.txt`，再重新运行。")
+
+    if "Runtime dependency precheck failed" in combined:
+        category = "missing_python_dependency"
+        messages.append("运行前依赖预检未通过，当前环境缺少关键 Python 依赖。")
+        suggestions.append("先执行 `pip install -r requirements.txt`，如果仍缺少 torch，请检查当前 Python 环境是否与已验证环境一致。")
 
     if "FileNotFoundError" in combined and not missing_inputs:
         category = "file_not_found"
@@ -5257,6 +7688,811 @@ def _render_diagnostics_panel(
         st.code(stdout_excerpt)
 
 
+def _load_cd38_public_starter_summary() -> dict[str, Any] | None:
+    current = st.session_state.get("last_cd38_public_starter")
+    if isinstance(current, dict):
+        return current
+    return _load_json(CD38_PUBLIC_STARTER_SUMMARY_PATH)
+
+
+def _run_cd38_public_starter_from_ui() -> None:
+    stdout_buffer = StringIO()
+    stderr_buffer = StringIO()
+    try:
+        with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
+            summary = run_cd38_public_starter(
+                continue_on_error=True,
+                python_executable=sys.executable,
+            )
+    except Exception as exc:
+        st.session_state["last_cd38_public_starter"] = None
+        st.session_state["last_cd38_public_starter_message"] = f"CD38 starter 刷新失败: {exc}"
+        st.session_state["last_cd38_public_starter_stdout"] = stdout_buffer.getvalue()
+        st.session_state["last_cd38_public_starter_stderr"] = stderr_buffer.getvalue() + traceback.format_exc()
+        return
+
+    st.session_state["last_cd38_public_starter"] = summary
+    st.session_state["last_cd38_public_starter_stdout"] = stdout_buffer.getvalue()
+    st.session_state["last_cd38_public_starter_stderr"] = stderr_buffer.getvalue()
+    failed_count = int(summary.get("failed_command_count", 0)) if isinstance(summary, dict) else 0
+    completed_count = int(summary.get("completed_command_count", 0)) if isinstance(summary, dict) else 0
+    status_text = "成功" if failed_count == 0 else f"完成但有 {failed_count} 个子步骤失败"
+    st.session_state["last_cd38_public_starter_message"] = (
+        f"CD38 public starter 刷新{status_text}；成功子步骤 {completed_count} 个。"
+    )
+
+
+def _run_local_cli_command(command: list[str]) -> tuple[int, str, str]:
+    completed = subprocess.run(
+        command,
+        cwd=str(REPO_ROOT),
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return int(completed.returncode), str(completed.stdout or ""), str(completed.stderr or "")
+
+
+def _run_cd38_transfer_package_from_ui() -> None:
+    command = [
+        sys.executable,
+        "package_cd38_external_tool_inputs.py",
+        "--package_dir",
+        str(CD38_EXTERNAL_INPUT_ROOT),
+        "--out_dir",
+        str(CD38_TRANSFER_ROOT),
+    ]
+    returncode, stdout_text, stderr_text = _run_local_cli_command(command)
+    st.session_state["last_cd38_transfer_stdout"] = stdout_text
+    st.session_state["last_cd38_transfer_stderr"] = stderr_text
+    if returncode == 0:
+        st.session_state["last_cd38_transfer_message"] = f"CD38 外部工具 transfer zip 已生成: {CD38_TRANSFER_ZIP_PATH}"
+    else:
+        st.session_state["last_cd38_transfer_message"] = f"CD38 transfer zip 生成失败，returncode={returncode}。"
+
+
+def _normalize_local_path_text(value: str) -> Path | None:
+    text = str(value or "").strip().strip('"').strip("'")
+    if not text:
+        return None
+    path = Path(text).expanduser()
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def _run_cd38_finalize_from_ui(*, import_dry_run: bool, run_discovered: bool, run_sensitivity: bool) -> None:
+    source_path = _normalize_local_path_text(str(st.session_state.get("cd38_returned_source_path") or ""))
+    if source_path is not None and not source_path.exists():
+        st.session_state["last_cd38_finalize_message"] = f"返回包路径不存在: {source_path}"
+        st.session_state["last_cd38_finalize_stdout"] = ""
+        st.session_state["last_cd38_finalize_stderr"] = ""
+        return
+
+    if source_path is not None and not import_dry_run:
+        gate_ok, gate_message = _run_cd38_preimport_gate(source_path)
+        st.session_state["last_cd38_return_gate_message"] = gate_message
+        if not gate_ok:
+            st.session_state["last_cd38_finalize_message"] = "已阻止导入返回包；请先修复 gate 报告中的问题。"
+            st.session_state["last_cd38_finalize_stdout"] = ""
+            st.session_state["last_cd38_finalize_stderr"] = ""
+            return
+
+    command = [
+        sys.executable,
+        "finalize_cd38_external_benchmark.py",
+        "--package_dir",
+        str(CD38_EXTERNAL_INPUT_ROOT),
+        "--continue_on_error",
+    ]
+    if source_path is not None:
+        command.extend(["--import_source", str(source_path)])
+    if import_dry_run:
+        command.append("--import_dry_run")
+    if run_discovered:
+        command.append("--run_discovered")
+    if run_sensitivity:
+        command.append("--run_sensitivity")
+
+    returncode, stdout_text, stderr_text = _run_local_cli_command(command)
+    st.session_state["last_cd38_finalize_stdout"] = stdout_text
+    st.session_state["last_cd38_finalize_stderr"] = stderr_text
+    if source_path is not None:
+        gate_returncode, gate_stdout, gate_stderr = _run_local_cli_command(
+            [
+                sys.executable,
+                "build_cd38_return_package_gate.py",
+                "--out_dir",
+                str(CD38_IMPORT_GATE_ROOT),
+            ]
+        )
+        st.session_state["last_cd38_return_gate_stdout"] = gate_stdout
+        st.session_state["last_cd38_return_gate_stderr"] = gate_stderr
+        if gate_returncode != 0:
+            st.session_state["last_cd38_return_gate_message"] = (
+                f"CD38 返回包安全门控生成失败，returncode={gate_returncode}。"
+            )
+        else:
+            st.session_state["last_cd38_return_gate_message"] = "CD38 返回包安全门控已生成。"
+    if returncode == 0:
+        mode = "dry-run 检查" if import_dry_run else "finalize"
+        st.session_state["last_cd38_finalize_message"] = f"CD38 外部输出 {mode} 已完成。"
+    else:
+        st.session_state["last_cd38_finalize_message"] = f"CD38 外部输出 finalize 失败，returncode={returncode}。"
+
+
+def _run_cd38_return_package_gate_from_ui() -> None:
+    command = [
+        sys.executable,
+        "build_cd38_return_package_gate.py",
+        "--out_dir",
+        str(CD38_IMPORT_GATE_ROOT),
+    ]
+    returncode, stdout_text, stderr_text = _run_local_cli_command(command)
+    st.session_state["last_cd38_return_gate_stdout"] = stdout_text
+    st.session_state["last_cd38_return_gate_stderr"] = stderr_text
+    if returncode == 0:
+        st.session_state["last_cd38_return_gate_message"] = "CD38 返回包安全门控已生成。"
+    else:
+        st.session_state["last_cd38_return_gate_message"] = f"CD38 返回包安全门控生成失败，returncode={returncode}。"
+
+
+def _run_cd38_preimport_gate(source_path: Path) -> tuple[bool, str]:
+    preimport_out = CD38_IMPORT_GATE_ROOT / "preimport_dry_run"
+    dry_run_command = [
+        sys.executable,
+        "import_cd38_external_tool_outputs.py",
+        "--source",
+        str(source_path),
+        "--package_dir",
+        str(CD38_EXTERNAL_INPUT_ROOT),
+        "--out_dir",
+        str(preimport_out),
+        "--dry_run",
+    ]
+    dry_returncode, dry_stdout, dry_stderr = _run_local_cli_command(dry_run_command)
+    st.session_state["last_cd38_preimport_gate_stdout"] = dry_stdout
+    st.session_state["last_cd38_preimport_gate_stderr"] = dry_stderr
+    if dry_returncode != 0:
+        return False, f"导入前 dry-run 失败，returncode={dry_returncode}。"
+
+    gate_command = [
+        sys.executable,
+        "build_cd38_return_package_gate.py",
+        "--import_summary_json",
+        str(preimport_out / "cd38_external_tool_output_import_summary.json"),
+        "--scan_csv",
+        str(preimport_out / "cd38_external_tool_output_import_scan.csv"),
+        "--out_dir",
+        str(CD38_IMPORT_GATE_ROOT),
+    ]
+    gate_returncode, gate_stdout, gate_stderr = _run_local_cli_command(gate_command)
+    st.session_state["last_cd38_return_gate_stdout"] = gate_stdout
+    st.session_state["last_cd38_return_gate_stderr"] = gate_stderr
+    if gate_returncode != 0:
+        return False, f"导入前安全门控生成失败，returncode={gate_returncode}。"
+
+    gate_summary = _load_json(CD38_IMPORT_GATE_ROOT / "cd38_return_package_gate_summary.json")
+    gate_status = str(gate_summary.get("gate_status") if isinstance(gate_summary, dict) else "")
+    decision_message = str(gate_summary.get("decision_message") if isinstance(gate_summary, dict) else "")
+    if not gate_status.startswith("PASS"):
+        return False, f"导入前安全门控拦截: {gate_status}。{decision_message}"
+    return True, f"导入前安全门控通过: {gate_status}。"
+
+
+def _run_cd38_return_import_selftest_from_ui() -> None:
+    command = [
+        sys.executable,
+        "selftest_cd38_return_import_workflow.py",
+        "--package_dir",
+        str(CD38_EXTERNAL_INPUT_ROOT),
+        "--work_dir",
+        str(CD38_RETURN_SELFTEST_ROOT),
+    ]
+    returncode, stdout_text, stderr_text = _run_local_cli_command(command)
+    st.session_state["last_cd38_return_selftest_stdout"] = stdout_text
+    st.session_state["last_cd38_return_selftest_stderr"] = stderr_text
+    if returncode == 0:
+        st.session_state["last_cd38_return_selftest_message"] = "CD38 返回包导入自测通过。"
+    else:
+        st.session_state["last_cd38_return_selftest_message"] = f"CD38 返回包导入自测失败，returncode={returncode}。"
+
+
+def _run_cd38_external_workflow_selftest_from_ui() -> None:
+    command = [
+        sys.executable,
+        "selftest_cd38_external_workflow.py",
+        "--work_dir",
+        str(CD38_WORKFLOW_SELFTEST_ROOT),
+    ]
+    returncode, stdout_text, stderr_text = _run_local_cli_command(command)
+    st.session_state["last_cd38_workflow_selftest_stdout"] = stdout_text
+    st.session_state["last_cd38_workflow_selftest_stderr"] = stderr_text
+    if returncode == 0:
+        st.session_state["last_cd38_workflow_selftest_message"] = "CD38 外部工具链路一键自检通过。"
+    else:
+        st.session_state["last_cd38_workflow_selftest_message"] = f"CD38 外部工具链路一键自检失败，returncode={returncode}。"
+
+
+def _download_file_button(label: str, path: Path, *, mime: str, key: str) -> None:
+    if path.exists() and path.is_file():
+        st.download_button(
+            label=label,
+            data=path.read_bytes(),
+            file_name=path.name,
+            mime=mime,
+            use_container_width=True,
+            key=key,
+        )
+    else:
+        st.button(label, use_container_width=True, disabled=True, key=f"{key}_disabled")
+
+
+def _open_path_button(label: str, path: Path, *, key: str) -> None:
+    if st.button(label, use_container_width=True, disabled=not path.exists(), key=key):
+        ok, message = _open_local_path(path)
+        if ok:
+            st.success(message)
+        else:
+            st.error(message)
+
+
+def _render_cd38_transfer_and_return_panel() -> None:
+    st.subheader("外部工具转移包和返回包检查")
+    st.caption(
+        "如果本机没有 P2Rank/fpocket，先生成 transfer zip，拿到 WSL/Linux 或另一台机器运行。"
+        "跑完后把返回 zip/目录路径填回来，先 dry-run 检查，再导入并 finalize；"
+        "正式导入前会自动先跑安全门控，非 `PASS_*` 状态会被拦截。"
+    )
+
+    transfer_cols = st.columns(4)
+    if transfer_cols[0].button("生成 transfer zip", use_container_width=True, key="build_cd38_transfer_zip"):
+        with st.spinner("正在生成 CD38 外部工具 transfer zip..."):
+            _run_cd38_transfer_package_from_ui()
+    with transfer_cols[1]:
+        _download_file_button(
+            "下载 transfer zip",
+            CD38_TRANSFER_ZIP_PATH,
+            mime="application/zip",
+            key="download_cd38_transfer_zip",
+        )
+    with transfer_cols[2]:
+        _open_path_button("打开 transfer 目录", CD38_TRANSFER_ROOT, key="open_cd38_transfer_root")
+    with transfer_cols[3]:
+        _open_path_button("打开输入包目录", CD38_EXTERNAL_INPUT_ROOT, key="open_cd38_external_input_root")
+
+    transfer_message = str(st.session_state.get("last_cd38_transfer_message") or "")
+    if transfer_message:
+        if "失败" in transfer_message:
+            st.error(transfer_message)
+        else:
+            st.success(transfer_message)
+
+    transfer_summary = _load_json(CD38_TRANSFER_ROOT / "cd38_external_tool_inputs_transfer_summary.json")
+    if isinstance(transfer_summary, dict):
+        transfer_metric1, transfer_metric2, transfer_metric3 = st.columns(3)
+        transfer_metric1.metric("Transfer files", str(transfer_summary.get("file_count", "N/A")))
+        transfer_metric2.metric("Transfer size", _format_size_text(CD38_TRANSFER_ZIP_PATH))
+        transfer_metric3.metric("Includes outputs", str(transfer_summary.get("include_existing_outputs", False)))
+        runbook_refresh = (
+            transfer_summary.get("runbook_refresh")
+            if isinstance(transfer_summary.get("runbook_refresh"), dict)
+            else {}
+        )
+        if runbook_refresh:
+            selected_count = runbook_refresh.get("selected_action_count", "N/A")
+            st.caption(f"Next-run runbook: {runbook_refresh.get('status', 'unknown')}；selected actions={selected_count}")
+
+    runbook_cols = st.columns(4)
+    with runbook_cols[0]:
+        _download_file_button(
+            "下载 next-run 说明",
+            CD38_NEXT_RUN_REPORT_PATH,
+            mime="text/markdown",
+            key="download_cd38_next_run_md",
+        )
+    with runbook_cols[1]:
+        _download_file_button(
+            "下载 next-run CSV",
+            CD38_NEXT_RUN_PLAN_PATH,
+            mime="text/csv",
+            key="download_cd38_next_run_csv",
+        )
+    with runbook_cols[2]:
+        _download_file_button(
+            "下载 PowerShell 脚本",
+            CD38_NEXT_RUN_PS1_PATH,
+            mime="text/plain",
+            key="download_cd38_next_run_ps1",
+        )
+    with runbook_cols[3]:
+        _download_file_button(
+            "下载 Bash 脚本",
+            CD38_NEXT_RUN_SH_PATH,
+            mime="text/plain",
+            key="download_cd38_next_run_sh",
+        )
+
+    returned_source_text = st.text_input(
+        "返回 zip 或返回目录路径",
+        key="cd38_returned_source_path",
+        placeholder=r"例如 D:\path\returned_external_tool_inputs.zip",
+        help="这里填外部机器跑完 P2Rank/fpocket 后带回来的 zip 或目录。不要填原始 transfer zip，dry-run 会识别这种情况。",
+    )
+    returned_source = _normalize_local_path_text(returned_source_text)
+    returned_source_exists = bool(returned_source is not None and returned_source.exists())
+    if returned_source is not None and not returned_source_exists:
+        st.warning(f"当前返回路径不存在: {returned_source}")
+
+    finalize_options = st.columns(3)
+    run_discovered = finalize_options[0].checkbox(
+        "导入后尝试加入 benchmark panel",
+        value=True,
+        key="cd38_finalize_run_discovered",
+    )
+    run_sensitivity = finalize_options[1].checkbox(
+        "同时刷新参数敏感性",
+        value=False,
+        key="cd38_finalize_run_sensitivity",
+    )
+    finalize_options[2].caption("建议先 dry-run；确认候选输出数量后再导入。")
+
+    finalize_cols = st.columns(3)
+    if finalize_cols[0].button(
+        "Dry-run 检查返回包",
+        use_container_width=True,
+        disabled=not returned_source_exists,
+        key="cd38_finalize_dry_run",
+    ):
+        with st.spinner("正在 dry-run 检查 CD38 返回包..."):
+            _run_cd38_finalize_from_ui(
+                import_dry_run=True,
+                run_discovered=bool(run_discovered),
+                run_sensitivity=False,
+            )
+    if finalize_cols[1].button(
+        "导入返回包并 finalize",
+        use_container_width=True,
+        disabled=not returned_source_exists,
+        key="cd38_finalize_import",
+    ):
+        with st.spinner("正在导入 CD38 返回包并刷新 readiness..."):
+            _run_cd38_finalize_from_ui(
+                import_dry_run=False,
+                run_discovered=bool(run_discovered),
+                run_sensitivity=bool(run_sensitivity),
+            )
+    if finalize_cols[2].button(
+        "仅刷新外部输出状态",
+        use_container_width=True,
+        key="cd38_finalize_status_only",
+    ):
+        with st.spinner("正在刷新 CD38 外部输出 preflight/readiness..."):
+            _run_cd38_finalize_from_ui(
+                import_dry_run=False,
+                run_discovered=False,
+                run_sensitivity=False,
+            )
+
+    finalize_message = str(st.session_state.get("last_cd38_finalize_message") or "")
+    if finalize_message:
+        if "失败" in finalize_message or "不存在" in finalize_message:
+            st.error(finalize_message)
+        else:
+            st.success(finalize_message)
+
+    finalize_summary_path = CD38_FINALIZE_ROOT / "cd38_external_benchmark_finalize_summary.json"
+    finalize_report_path = CD38_FINALIZE_ROOT / "cd38_external_benchmark_finalize_report.md"
+    finalize_summary = _load_json(finalize_summary_path)
+    if isinstance(finalize_summary, dict):
+        import_summary = (
+            finalize_summary.get("import_summary")
+            if isinstance(finalize_summary.get("import_summary"), dict)
+            else {}
+        )
+        action_plan_summary = (
+            finalize_summary.get("action_plan_summary")
+            if isinstance(finalize_summary.get("action_plan_summary"), dict)
+            else {}
+        )
+        status_cols = st.columns(4)
+        status_cols[0].metric("P2Rank ready", str(finalize_summary.get("p2rank_outputs_ready", "N/A")))
+        status_cols[1].metric("fpocket ready", str(finalize_summary.get("fpocket_outputs_ready", "N/A")))
+        status_cols[2].metric("Runnable rows", str(finalize_summary.get("external_manifest_row_count", "N/A")))
+        status_cols[3].metric("Import candidates", str(import_summary.get("candidate_file_count", "N/A")))
+        diagnosis = str(import_summary.get("source_diagnosis") or "")
+        if diagnosis:
+            st.caption(f"返回包诊断: {diagnosis}")
+        if action_plan_summary.get("overall_status"):
+            st.caption(f"Action plan 状态: {action_plan_summary.get('overall_status')}")
+        next_actions = finalize_summary.get("next_actions") if isinstance(finalize_summary.get("next_actions"), list) else []
+        if next_actions:
+            with st.expander("Finalize 下一步建议", expanded=False):
+                for action in next_actions:
+                    st.write(f"- {action}")
+
+    report_cols = st.columns(4)
+    with report_cols[0]:
+        _download_file_button(
+            "下载 finalize 报告",
+            finalize_report_path,
+            mime="text/markdown",
+            key="download_cd38_finalize_report",
+        )
+    with report_cols[1]:
+        _download_file_button(
+            "下载返回 coverage CSV",
+            CD38_IMPORT_ROOT / "cd38_external_tool_output_import_coverage.csv",
+            mime="text/csv",
+            key="download_cd38_import_coverage_csv",
+        )
+    with report_cols[2]:
+        _download_file_button(
+            "下载返回 repair plan",
+            CD38_IMPORT_ROOT / "cd38_external_tool_output_import_repair_plan.csv",
+            mime="text/csv",
+            key="download_cd38_import_repair_plan_csv",
+        )
+    with report_cols[3]:
+        _open_path_button("打开 finalize 目录", CD38_FINALIZE_ROOT, key="open_cd38_finalize_root")
+
+    gate_summary_path = CD38_IMPORT_GATE_ROOT / "cd38_return_package_gate_summary.json"
+    gate_report_path = CD38_IMPORT_GATE_ROOT / "cd38_return_package_gate_report.md"
+    gate_decision_csv = CD38_IMPORT_GATE_ROOT / "cd38_return_package_gate_decision.csv"
+    st.subheader("返回包安全门控")
+    gate_cols = st.columns(4)
+    if gate_cols[0].button("生成安全门控", use_container_width=True, key="run_cd38_return_gate"):
+        with st.spinner("正在生成 CD38 返回包安全门控..."):
+            _run_cd38_return_package_gate_from_ui()
+    with gate_cols[1]:
+        _download_file_button(
+            "下载 gate 报告",
+            gate_report_path,
+            mime="text/markdown",
+            key="download_cd38_return_gate_report",
+        )
+    with gate_cols[2]:
+        _download_file_button(
+            "下载 gate 决策 CSV",
+            gate_decision_csv,
+            mime="text/csv",
+            key="download_cd38_return_gate_decision_csv",
+        )
+    with gate_cols[3]:
+        _open_path_button("打开 gate 目录", CD38_IMPORT_GATE_ROOT, key="open_cd38_return_gate_root")
+
+    gate_message = str(st.session_state.get("last_cd38_return_gate_message") or "")
+    if gate_message:
+        if "失败" in gate_message:
+            st.error(gate_message)
+        else:
+            st.success(gate_message)
+
+    gate_summary = _load_json(gate_summary_path)
+    if isinstance(gate_summary, dict):
+        gate_status = str(gate_summary.get("gate_status") or "N/A")
+        coverage = gate_summary.get("coverage") if isinstance(gate_summary.get("coverage"), dict) else {}
+        gate_status_cols = st.columns(4)
+        gate_status_cols[0].metric("Gate", gate_status)
+        gate_status_cols[1].metric("Candidates", str(gate_summary.get("candidate_file_count", "N/A")))
+        gate_status_cols[2].metric(
+            "Coverage",
+            f"{coverage.get('ready_expected_output_count', 'N/A')}/{coverage.get('expected_output_count', 'N/A')}",
+        )
+        gate_status_cols[3].metric("Synthetic", str(gate_summary.get("synthetic_fixture_detected", "N/A")))
+        decision_message = str(gate_summary.get("decision_message") or "")
+        if gate_status.startswith("PASS"):
+            st.success(decision_message)
+        elif gate_status.startswith("WARN"):
+            st.warning(decision_message)
+        else:
+            st.error(decision_message)
+        actions = gate_summary.get("recommended_actions") if isinstance(gate_summary.get("recommended_actions"), list) else []
+        if actions:
+            with st.expander("Gate 建议动作", expanded=False):
+                for action in actions:
+                    st.write(f"- {action}")
+
+    transfer_stdout = str(st.session_state.get("last_cd38_transfer_stdout") or "")
+    transfer_stderr = str(st.session_state.get("last_cd38_transfer_stderr") or "")
+    preimport_stdout = str(st.session_state.get("last_cd38_preimport_gate_stdout") or "")
+    preimport_stderr = str(st.session_state.get("last_cd38_preimport_gate_stderr") or "")
+    finalize_stdout = str(st.session_state.get("last_cd38_finalize_stdout") or "")
+    finalize_stderr = str(st.session_state.get("last_cd38_finalize_stderr") or "")
+    gate_stdout = str(st.session_state.get("last_cd38_return_gate_stdout") or "")
+    gate_stderr = str(st.session_state.get("last_cd38_return_gate_stderr") or "")
+    if (
+        transfer_stdout
+        or transfer_stderr
+        or preimport_stdout
+        or preimport_stderr
+        or finalize_stdout
+        or finalize_stderr
+        or gate_stdout
+        or gate_stderr
+    ):
+        with st.expander("查看 transfer/finalize 最近日志", expanded=False):
+            if transfer_stdout:
+                st.caption("transfer stdout")
+                st.code(transfer_stdout)
+            if transfer_stderr:
+                st.caption("transfer stderr")
+                st.code(transfer_stderr)
+            if preimport_stdout:
+                st.caption("pre-import dry-run stdout")
+                st.code(preimport_stdout)
+            if preimport_stderr:
+                st.caption("pre-import dry-run stderr")
+                st.code(preimport_stderr)
+            if finalize_stdout:
+                st.caption("finalize stdout")
+                st.code(finalize_stdout)
+            if finalize_stderr:
+                st.caption("finalize stderr")
+                st.code(finalize_stderr)
+            if gate_stdout:
+                st.caption("gate stdout")
+                st.code(gate_stdout)
+            if gate_stderr:
+                st.caption("gate stderr")
+                st.code(gate_stderr)
+
+    with st.expander("返回包导入流程自测（不使用真实结果）", expanded=False):
+        st.caption(
+            "这个自测会生成一个合成返回包，只验证 importer 能否识别 `p2rank_outputs/` 和 "
+            "`fpocket_runs/*/*_out/` 路径，并确认 expected coverage 能达到 6/6。"
+            "它不是 CD38 pocket 准确性 benchmark，不能作为真实工具结果使用。"
+        )
+        selftest_cols = st.columns(3)
+        if selftest_cols[0].button("运行返回包导入自测", use_container_width=True, key="run_cd38_return_selftest"):
+            with st.spinner("正在运行 CD38 返回包导入自测..."):
+                _run_cd38_return_import_selftest_from_ui()
+        with selftest_cols[1]:
+            _download_file_button(
+                "下载自测报告",
+                CD38_RETURN_SELFTEST_ROOT / "cd38_return_import_selftest_report.md",
+                mime="text/markdown",
+                key="download_cd38_return_selftest_report",
+            )
+        with selftest_cols[2]:
+            _open_path_button("打开自测目录", CD38_RETURN_SELFTEST_ROOT, key="open_cd38_return_selftest_root")
+
+        selftest_message = str(st.session_state.get("last_cd38_return_selftest_message") or "")
+        if selftest_message:
+            if "失败" in selftest_message:
+                st.error(selftest_message)
+            else:
+                st.success(selftest_message)
+
+        selftest_summary = _load_json(CD38_RETURN_SELFTEST_ROOT / "cd38_return_import_selftest_summary.json")
+        if isinstance(selftest_summary, dict):
+            importer = (
+                selftest_summary.get("importer_summary")
+                if isinstance(selftest_summary.get("importer_summary"), dict)
+                else {}
+            )
+            coverage = importer.get("coverage") if isinstance(importer.get("coverage"), dict) else {}
+            stest_col1, stest_col2, stest_col3, stest_col4 = st.columns(4)
+            stest_col1.metric("Self-test", str(selftest_summary.get("status", "N/A")))
+            stest_col2.metric("Candidates", str(importer.get("candidate_file_count", "N/A")))
+            stest_col3.metric(
+                "Coverage",
+                f"{coverage.get('ready_expected_output_count', 'N/A')}/{coverage.get('expected_output_count', 'N/A')}",
+            )
+            stest_col4.metric("Synthetic files", str(selftest_summary.get("synthetic_file_count", "N/A")))
+
+        selftest_stdout = str(st.session_state.get("last_cd38_return_selftest_stdout") or "")
+        selftest_stderr = str(st.session_state.get("last_cd38_return_selftest_stderr") or "")
+        if selftest_stdout or selftest_stderr:
+            with st.expander("查看返回包导入自测日志", expanded=False):
+                if selftest_stdout:
+                    st.code(selftest_stdout)
+                if selftest_stderr:
+                    st.code(selftest_stderr)
+
+    with st.expander("CD38 外部工具链路一键自检", expanded=False):
+        st.caption(
+            "这个自检会连续验证 transfer zip 生成、原始 transfer zip 的 strict gate 拦截、"
+            "synthetic returned fixture 的 importer/gate 行为，以及 public starter 刷新。"
+            "它不运行 P2Rank/fpocket，也不会产生真实 benchmark 证据。"
+        )
+        workflow_cols = st.columns(3)
+        if workflow_cols[0].button("运行外部链路一键自检", use_container_width=True, key="run_cd38_workflow_selftest"):
+            with st.spinner("正在运行 CD38 外部工具链路一键自检..."):
+                _run_cd38_external_workflow_selftest_from_ui()
+        with workflow_cols[1]:
+            _download_file_button(
+                "下载链路自检报告",
+                CD38_WORKFLOW_SELFTEST_ROOT / "cd38_external_workflow_selftest_report.md",
+                mime="text/markdown",
+                key="download_cd38_workflow_selftest_report",
+            )
+        with workflow_cols[2]:
+            _open_path_button("打开链路自检目录", CD38_WORKFLOW_SELFTEST_ROOT, key="open_cd38_workflow_selftest_root")
+
+        workflow_message = str(st.session_state.get("last_cd38_workflow_selftest_message") or "")
+        if workflow_message:
+            if "失败" in workflow_message:
+                st.error(workflow_message)
+            else:
+                st.success(workflow_message)
+
+        workflow_summary = _load_json(CD38_WORKFLOW_SELFTEST_ROOT / "cd38_external_workflow_selftest_summary.json")
+        if isinstance(workflow_summary, dict):
+            workflow_status_cols = st.columns(4)
+            workflow_status_cols[0].metric("Workflow", str(workflow_summary.get("overall_status", "N/A")))
+            workflow_status_cols[1].metric(
+                "Passed steps",
+                f"{workflow_summary.get('passed_step_count', 'N/A')}/{workflow_summary.get('step_count', 'N/A')}",
+            )
+            workflow_status_cols[2].metric("Original gate", str(workflow_summary.get("original_transfer_gate_status", "N/A")))
+            workflow_status_cols[3].metric("Fixture gate", str(workflow_summary.get("synthetic_fixture_gate_status", "N/A")))
+
+        workflow_stdout = str(st.session_state.get("last_cd38_workflow_selftest_stdout") or "")
+        workflow_stderr = str(st.session_state.get("last_cd38_workflow_selftest_stderr") or "")
+        if workflow_stdout or workflow_stderr:
+            with st.expander("查看外部链路一键自检日志", expanded=False):
+                if workflow_stdout:
+                    st.code(workflow_stdout)
+                if workflow_stderr:
+                    st.code(workflow_stderr)
+
+
+def _render_cd38_public_starter_panel() -> None:
+    st.subheader("CD38 公开结构 benchmark starter")
+    st.caption(
+        "这个面板只刷新公开 CD38 benchmark 的本地产物和 action plan，不运行外部 P2Rank/fpocket，"
+        "也不改变当前 ML 排名分数。它的作用是把“还缺哪些真实外部 pocket 输出”直接暴露出来。"
+    )
+
+    run_col, _, _ = st.columns(3)
+    if run_col.button("刷新 CD38 public starter", use_container_width=True, key="refresh_cd38_public_starter"):
+        with st.spinner("正在刷新 CD38 public starter..."):
+            _run_cd38_public_starter_from_ui()
+
+    open_col1, open_col2, open_col3 = st.columns(3)
+    with open_col1:
+        _open_path_button(
+            "打开 CD38 benchmark 文件夹",
+            CD38_BENCHMARK_ROOT,
+            key="open_cd38_benchmark_root",
+        )
+    with open_col2:
+        _open_path_button(
+            "打开 starter 报告",
+            CD38_PUBLIC_STARTER_REPORT_PATH,
+            key="open_cd38_public_starter_report",
+        )
+    with open_col3:
+        _open_path_button(
+            "打开外部工具输入包",
+            CD38_BENCHMARK_ROOT / "external_tool_inputs",
+            key="open_cd38_external_inputs",
+        )
+
+    message = str(st.session_state.get("last_cd38_public_starter_message") or "")
+    if message:
+        if "失败" in message:
+            st.error(message)
+        else:
+            st.success(message)
+
+    summary = _load_cd38_public_starter_summary()
+    if not isinstance(summary, dict):
+        st.info("当前还没有 CD38 public starter summary。点击上方按钮生成。")
+        return
+
+    panel = summary.get("panel") if isinstance(summary.get("panel"), dict) else {}
+    readiness = summary.get("readiness") if isinstance(summary.get("readiness"), dict) else {}
+    action_plan = summary.get("action_plan") if isinstance(summary.get("action_plan"), dict) else {}
+    proxy_calibration = summary.get("proxy_calibration") if isinstance(summary.get("proxy_calibration"), dict) else {}
+    proxy_recommendation = (
+        proxy_calibration.get("recommendation")
+        if isinstance(proxy_calibration.get("recommendation"), dict)
+        else {}
+    )
+
+    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+    metric_col1.metric("Panel rows", int(panel.get("row_count", 0) or 0))
+    metric_col2.metric("Missing / pending", str(readiness.get("missing_or_pending_count", "N/A")))
+    metric_col3.metric("Action plan", str(action_plan.get("overall_status") or "N/A"))
+    metric_col4.metric("Missing benchmark gaps", str(action_plan.get("missing_benchmark_gap_action_count") or "N/A"))
+
+    method_counts = panel.get("method_counts") if isinstance(panel.get("method_counts"), dict) else {}
+    if method_counts:
+        st.caption("当前 panel 方法构成: " + ", ".join(f"{key}={value}" for key, value in method_counts.items()))
+
+    if action_plan.get("overall_status") == "blocked_external_outputs_missing":
+        st.warning(
+            "当前 blocker 不是本地代码不能跑，而是缺真实外部 P2Rank/fpocket 输出。"
+            "优先按 action plan 补 `3ROP/4OGW fpocket`，再补 `3F6Y P2Rank/fpocket`。"
+        )
+
+    if proxy_recommendation:
+        st.info(
+            "Proxy 校准结论: "
+            f"{proxy_recommendation.get('recommended_policy', 'N/A')}；"
+            f"默认 overwide penalty weight={proxy_recommendation.get('recommended_default_penalty_weight', 'N/A')}。"
+        )
+
+    action_plan_md = CD38_BENCHMARK_ROOT / "action_plan" / "cd38_external_benchmark_action_plan.md"
+    action_plan_csv = CD38_BENCHMARK_ROOT / "action_plan" / "cd38_external_benchmark_action_plan.csv"
+    preflight_report = (
+        CD38_BENCHMARK_ROOT
+        / "external_tool_inputs"
+        / "preflight"
+        / "cd38_external_tool_preflight_report.md"
+    )
+    expected_returns_csv = CD38_BENCHMARK_ROOT / "external_tool_inputs" / "cd38_external_tool_expected_returns.csv"
+    return_checklist_md = CD38_BENCHMARK_ROOT / "external_tool_inputs" / "cd38_external_tool_return_checklist.md"
+    readiness_report = CD38_BENCHMARK_ROOT / "readiness" / "cd38_benchmark_readiness_report.md"
+
+    st.subheader("关键产物")
+    file_col1, file_col2, file_col3, file_col4 = st.columns(4)
+    with file_col1:
+        _download_file_button(
+            "下载 starter 报告",
+            CD38_PUBLIC_STARTER_REPORT_PATH,
+            mime="text/markdown",
+            key="download_cd38_public_starter_report",
+        )
+    with file_col2:
+        _download_file_button(
+            "下载 action plan CSV",
+            action_plan_csv,
+            mime="text/csv",
+            key="download_cd38_action_plan_csv",
+        )
+    with file_col3:
+        _download_file_button(
+            "下载 expected returns CSV",
+            expected_returns_csv,
+            mime="text/csv",
+            key="download_cd38_expected_returns_csv",
+        )
+    with file_col4:
+        _download_file_button(
+            "下载返回检查清单",
+            return_checklist_md,
+            mime="text/markdown",
+            key="download_cd38_return_checklist_md",
+        )
+
+    open_cols = st.columns(3)
+    with open_cols[0]:
+        _open_path_button("打开 action plan", action_plan_md, key="open_cd38_action_plan_md")
+    with open_cols[1]:
+        _open_path_button("打开 preflight 报告", preflight_report, key="open_cd38_preflight_report")
+    with open_cols[2]:
+        _open_path_button("打开 readiness 报告", readiness_report, key="open_cd38_readiness_report")
+
+    st.divider()
+    _render_cd38_transfer_and_return_panel()
+
+    action_df = _load_csv(action_plan_csv)
+    if action_df is not None and not action_df.empty:
+        st.subheader("Action plan 预览")
+        preview_columns = [
+            col
+            for col in ["priority", "status", "pdb_id", "method", "action_type", "recommended_action", "expected_return_path"]
+            if col in action_df.columns
+        ]
+        st.dataframe(action_df[preview_columns].head(12), use_container_width=True, hide_index=True)
+
+    if CD38_PUBLIC_STARTER_REPORT_PATH.exists():
+        with st.expander("查看 starter 报告正文", expanded=False):
+            st.markdown(_read_text(CD38_PUBLIC_STARTER_REPORT_PATH))
+
+    starter_stdout = str(st.session_state.get("last_cd38_public_starter_stdout") or "")
+    starter_stderr = str(st.session_state.get("last_cd38_public_starter_stderr") or "")
+    if starter_stdout or starter_stderr:
+        with st.expander("查看最近一次 CD38 starter 刷新日志", expanded=False):
+            if starter_stdout:
+                st.code(starter_stdout)
+            if starter_stderr:
+                st.code(starter_stderr)
+
+
 def _initialize_state() -> None:
     for key, value in FORM_DEFAULTS.items():
         st.session_state.setdefault(key, value)
@@ -5284,11 +8520,59 @@ def _initialize_state() -> None:
     st.session_state.setdefault("last_bundle_import", None)
     st.session_state.setdefault("last_bundle_import_message", "")
     st.session_state.setdefault("last_preflight", None)
+    st.session_state.setdefault("last_cd38_public_starter", None)
+    st.session_state.setdefault("last_cd38_public_starter_message", "")
+    st.session_state.setdefault("last_cd38_public_starter_stdout", "")
+    st.session_state.setdefault("last_cd38_public_starter_stderr", "")
+    st.session_state.setdefault("last_cd38_transfer_message", "")
+    st.session_state.setdefault("last_cd38_transfer_stdout", "")
+    st.session_state.setdefault("last_cd38_transfer_stderr", "")
+    st.session_state.setdefault("cd38_returned_source_path", "")
+    st.session_state.setdefault("last_cd38_finalize_message", "")
+    st.session_state.setdefault("last_cd38_finalize_stdout", "")
+    st.session_state.setdefault("last_cd38_finalize_stderr", "")
+    st.session_state.setdefault("last_cd38_preimport_gate_stdout", "")
+    st.session_state.setdefault("last_cd38_preimport_gate_stderr", "")
+    st.session_state.setdefault("last_cd38_return_gate_message", "")
+    st.session_state.setdefault("last_cd38_return_gate_stdout", "")
+    st.session_state.setdefault("last_cd38_return_gate_stderr", "")
+    st.session_state.setdefault("last_cd38_return_selftest_message", "")
+    st.session_state.setdefault("last_cd38_return_selftest_stdout", "")
+    st.session_state.setdefault("last_cd38_return_selftest_stderr", "")
+    st.session_state.setdefault("last_cd38_workflow_selftest_message", "")
+    st.session_state.setdefault("last_cd38_workflow_selftest_stdout", "")
+    st.session_state.setdefault("last_cd38_workflow_selftest_stderr", "")
     st.session_state.setdefault("run_queue", [])
     st.session_state.setdefault("active_process", None)
     st.session_state.setdefault("active_run_info", None)
     st.session_state.setdefault("queue_auto_run", False)
     st.session_state.setdefault("last_scheduler_message", "")
+    st.session_state.setdefault("last_plan_override_message", "")
+    st.session_state.setdefault("validation_feedback_feature_csv_path", "")
+    st.session_state.setdefault("validation_feedback_consensus_csv_path", "")
+    st.session_state.setdefault("validation_feedback_label_col", "experiment_label")
+    st.session_state.setdefault("validation_retrain_compare_labels_csv_path", "")
+    st.session_state.setdefault("validation_retrain_compare_top_k", 10)
+
+
+def _apply_pending_plan_override_path() -> None:
+    pending_path = str(st.session_state.pop("_pending_experiment_plan_override_local_path", "") or "").strip()
+    pending_message = str(st.session_state.pop("_pending_experiment_plan_override_message", "") or "").strip()
+    if pending_path:
+        st.session_state["experiment_plan_override_local_path"] = pending_path
+    if pending_message:
+        st.session_state["last_plan_override_message"] = pending_message
+
+    pending_feature_path = str(st.session_state.pop("_pending_feature_csv_local_path", "") or "").strip()
+    pending_feature_label_col = str(st.session_state.pop("_pending_feature_label_col", "") or "").strip()
+    pending_feature_message = str(st.session_state.pop("_pending_feature_csv_message", "") or "").strip()
+    if pending_feature_path:
+        st.session_state["start_mode"] = "feature_csv"
+        st.session_state["feature_csv_local_path"] = pending_feature_path
+        st.session_state["label_col"] = pending_feature_label_col or "experiment_label"
+        st.session_state["disable_label_aware_steps"] = False
+    if pending_feature_message:
+        st.session_state["last_scheduler_message"] = pending_feature_message
 
 
 def _run_pipeline_from_form(
@@ -5298,6 +8582,7 @@ def _run_pipeline_from_form(
     default_pocket_upload: Any,
     default_catalytic_upload: Any,
     default_ligand_upload: Any,
+    experiment_plan_override_upload: Any,
 ) -> None:
     form_payload = _build_form_payload()
     safe_run_name = _slugify_name(str(form_payload.get("run_name", "")))
@@ -5342,6 +8627,13 @@ def _run_pipeline_from_form(
         required=False,
         label="default_ligand_file",
     )
+    experiment_plan_override_file = _resolve_input_file(
+        uploaded_file=experiment_plan_override_upload,
+        local_path_text=str(form_payload.get("experiment_plan_override_local_path") or ""),
+        dst_dir=input_dir,
+        required=False,
+        label="experiment_plan_override_csv",
+    )
 
     resolved_inputs = {
         "input_csv": None if input_csv is None else str(input_csv),
@@ -5349,6 +8641,9 @@ def _run_pipeline_from_form(
         "default_pocket_file": None if default_pocket_file is None else str(default_pocket_file),
         "default_catalytic_file": None if default_catalytic_file is None else str(default_catalytic_file),
         "default_ligand_file": None if default_ligand_file is None else str(default_ligand_file),
+        "experiment_plan_override_csv": None
+        if experiment_plan_override_file is None
+        else str(experiment_plan_override_file),
     }
 
     command = _build_pipeline_command(
@@ -5359,9 +8654,13 @@ def _run_pipeline_from_form(
         default_pocket_file=default_pocket_file,
         default_catalytic_file=default_catalytic_file,
         default_ligand_file=default_ligand_file,
+        experiment_plan_override_file=experiment_plan_override_file,
         default_antigen_chain=str(form_payload.get("default_antigen_chain") or ""),
         default_nanobody_chain=str(form_payload.get("default_nanobody_chain") or ""),
+        label_col=str(form_payload.get("label_col") or "label"),
         top_k=int(form_payload.get("top_k", 3)),
+        pocket_overwide_penalty_weight=float(form_payload.get("pocket_overwide_penalty_weight", 0.0)),
+        pocket_overwide_threshold=float(form_payload.get("pocket_overwide_threshold", 0.55)),
         train_epochs=int(form_payload.get("train_epochs", 20)),
         train_batch_size=int(form_payload.get("train_batch_size", 64)),
         train_val_ratio=float(form_payload.get("train_val_ratio", 0.25)),
@@ -5369,6 +8668,10 @@ def _run_pipeline_from_form(
         seed=int(form_payload.get("seed", 42)),
         skip_failed_rows=bool(form_payload.get("skip_failed_rows", True)),
         disable_label_aware_steps=bool(form_payload.get("disable_label_aware_steps", False)),
+        enable_ai_assistant=bool(form_payload.get("enable_ai_assistant", False)),
+        ai_provider=str(form_payload.get("ai_provider") or "none"),
+        ai_model=str(form_payload.get("ai_model") or ""),
+        ai_max_rows=int(form_payload.get("ai_max_rows", 8)),
     )
     pipeline_kwargs = _build_pipeline_kwargs(
         form_payload=form_payload,
@@ -5378,6 +8681,7 @@ def _run_pipeline_from_form(
         default_pocket_file=default_pocket_file,
         default_catalytic_file=default_catalytic_file,
         default_ligand_file=default_ligand_file,
+        experiment_plan_override_file=experiment_plan_override_file,
     )
 
     started_at = _now_text()
@@ -5447,6 +8751,7 @@ def main() -> None:
         layout="wide",
     )
     _initialize_state()
+    _apply_pending_plan_override_path()
     _sync_background_run_state()
 
     st.title(f"{APP_NAME} 本地交互运行器")
@@ -5515,6 +8820,25 @@ def main() -> None:
         bundle_import_clicked = st.button("导入并自动识别输入", use_container_width=True)
         st.caption("支持两种方式：导入 zip，或直接扫描本地数据目录。两者二选一。")
 
+        st.subheader("没有数据时")
+        demo_active_running = isinstance(st.session_state.get("active_run_info"), dict)
+        demo_col1, demo_col2 = st.columns(2)
+        demo_col1.button(
+            "生成并载入 demo 输入",
+            use_container_width=True,
+            disabled=demo_active_running,
+            on_click=_load_demo_inputs_into_session_state,
+            help="生成 synthetic pose_features 和 synthetic validation override，只用于演示流程，不代表真实实验结论。",
+        )
+        demo_col2.button(
+            "生成并立即运行 demo",
+            use_container_width=True,
+            disabled=demo_active_running,
+            on_click=_run_demo_now_from_session_state,
+            help="自动生成 demo 输入并启动后台运行；结果会进入 local_app_runs。",
+        )
+        st.caption("demo 数据只用于检查安装、流程和导出效果，不代表真实实验结论。")
+
         st.subheader("主输入")
         input_csv_upload = None
         feature_csv_upload = None
@@ -5535,10 +8859,45 @@ def main() -> None:
         default_ligand_upload = st.file_uploader("上传 default ligand file", key="default_ligand_upload")
         st.text_input("或填写 default_ligand_file 本地路径", key="default_ligand_local_path")
 
+        st.subheader("实验计划覆盖（可选）")
+        experiment_plan_override_upload = st.file_uploader(
+            "上传 experiment_plan_override.csv",
+            type=["csv"],
+            key="experiment_plan_override_upload",
+        )
+        st.text_input("或填写 experiment_plan_override_csv 本地路径", key="experiment_plan_override_local_path")
+        st.caption("用于手工 include/exclude/standby/defer 候选，并把 owner/cost/status/note 写入实验计划单。")
+        plan_override_message = str(st.session_state.get("last_plan_override_message") or "").strip()
+        if plan_override_message:
+            st.success(plan_override_message)
+
         st.subheader("常用参数")
         st.text_input("default_antigen_chain", key="default_antigen_chain")
         st.text_input("default_nanobody_chain", key="default_nanobody_chain")
+        st.text_input(
+            "label_col",
+            key="label_col",
+            help="用于训练、compare 和 calibration 的标签列。默认 label；验证回灌特征表通常使用 experiment_label。",
+        )
         st.number_input("top_k", min_value=1, max_value=20, step=1, key="top_k")
+        st.number_input(
+            "pocket_overwide_penalty_weight",
+            min_value=0.0,
+            max_value=1.0,
+            step=0.05,
+            format="%.2f",
+            key="pocket_overwide_penalty_weight",
+            help="默认 0 不改变排名；大于 0 时会轻微惩罚 pocket_shape_overwide_proxy 偏高的口袋。",
+        )
+        st.number_input(
+            "pocket_overwide_threshold",
+            min_value=0.0,
+            max_value=0.99,
+            step=0.05,
+            format="%.2f",
+            key="pocket_overwide_threshold",
+            help="超过该阈值后才开始计算可选 overwide penalty。",
+        )
         st.number_input("train_epochs", min_value=1, max_value=2000, step=1, key="train_epochs")
         st.number_input("train_batch_size", min_value=1, max_value=4096, step=1, key="train_batch_size")
         st.number_input("train_val_ratio", min_value=0.05, max_value=0.95, step=0.05, key="train_val_ratio")
@@ -5552,6 +8911,26 @@ def main() -> None:
         st.number_input("seed", min_value=0, max_value=999999, step=1, key="seed")
         st.checkbox("skip_failed_rows", key="skip_failed_rows")
         st.checkbox("disable_label_aware_steps", key="disable_label_aware_steps")
+
+        st.subheader("AI 解释（可选）")
+        st.checkbox(
+            "生成 AI/离线解释报告",
+            key="enable_ai_assistant",
+            help="默认只做本地离线摘要；选择 OpenAI 时也只发送压缩后的 summary 和表格前几行，不上传原始 PDB。",
+        )
+        st.selectbox(
+            "AI provider",
+            options=["none", "openai"],
+            key="ai_provider",
+            help="none 表示完全离线；openai 需要设置 OPENAI_API_KEY，失败时会回退为离线摘要。",
+        )
+        st.text_input(
+            "AI model",
+            key="ai_model",
+            placeholder="默认 gpt-5.4-nano",
+            help="仅 provider=openai 时使用；留空则使用 ai_assistant.py 默认模型。",
+        )
+        st.number_input("AI 摘要表格行数", min_value=1, max_value=50, step=1, key="ai_max_rows")
 
         current_start_mode = str(st.session_state.get("start_mode") or "input_csv")
         active_running = isinstance(st.session_state.get("active_run_info"), dict)
@@ -5638,12 +9017,25 @@ def main() -> None:
 
     if enqueue_clicked:
         try:
+            preflight_report = _execute_preflight_check(
+                start_mode=str(st.session_state.get("start_mode") or "input_csv"),
+                input_csv_upload=input_csv_upload,
+                feature_csv_upload=feature_csv_upload,
+                default_pocket_upload=default_pocket_upload,
+                default_catalytic_upload=default_catalytic_upload,
+                default_ligand_upload=default_ligand_upload,
+                experiment_plan_override_upload=experiment_plan_override_upload,
+                form_payload=_build_form_payload(),
+            )
+            if str(preflight_report.get("status") or "") == "error":
+                raise ValueError("运行前检查发现阻塞问题，请先修正后再加入队列。")
             run_request = _prepare_run_request_from_form(
                 input_csv_upload=input_csv_upload,
                 feature_csv_upload=feature_csv_upload,
                 default_pocket_upload=default_pocket_upload,
                 default_catalytic_upload=default_catalytic_upload,
                 default_ligand_upload=default_ligand_upload,
+                experiment_plan_override_upload=experiment_plan_override_upload,
             )
             queue = st.session_state.get("run_queue")
             if not isinstance(queue, list):
@@ -5698,16 +9090,16 @@ def main() -> None:
 
     if check_inputs_clicked:
         try:
-            preflight_report = _build_preflight_report(
+            preflight_report = _execute_preflight_check(
                 start_mode=str(st.session_state.get("start_mode") or "input_csv"),
                 input_csv_upload=input_csv_upload,
                 feature_csv_upload=feature_csv_upload,
                 default_pocket_upload=default_pocket_upload,
                 default_catalytic_upload=default_catalytic_upload,
                 default_ligand_upload=default_ligand_upload,
+                experiment_plan_override_upload=experiment_plan_override_upload,
                 form_payload=_build_form_payload(),
             )
-            st.session_state["last_preflight"] = preflight_report
             if str(preflight_report.get("status") or "") == "ready":
                 st.success("输入检查完成，当前配置可以开始运行。")
             elif str(preflight_report.get("status") or "") == "warning":
@@ -5724,6 +9116,18 @@ def main() -> None:
 
     if run_clicked:
         try:
+            preflight_report = _execute_preflight_check(
+                start_mode=str(st.session_state.get("start_mode") or "input_csv"),
+                input_csv_upload=input_csv_upload,
+                feature_csv_upload=feature_csv_upload,
+                default_pocket_upload=default_pocket_upload,
+                default_catalytic_upload=default_catalytic_upload,
+                default_ligand_upload=default_ligand_upload,
+                experiment_plan_override_upload=experiment_plan_override_upload,
+                form_payload=_build_form_payload(),
+            )
+            if str(preflight_report.get("status") or "") == "error":
+                raise ValueError("运行前检查发现阻塞问题，请先修正后再启动运行。")
             with st.spinner("正在启动后台运行任务，请等待..."):
                 run_request = _prepare_run_request_from_form(
                     input_csv_upload=input_csv_upload,
@@ -5731,6 +9135,7 @@ def main() -> None:
                     default_pocket_upload=default_pocket_upload,
                     default_catalytic_upload=default_catalytic_upload,
                     default_ligand_upload=default_ligand_upload,
+                    experiment_plan_override_upload=experiment_plan_override_upload,
                 )
                 st.session_state["queue_auto_run"] = False
                 _start_background_run(run_request, queue_source="direct_run")
@@ -5746,6 +9151,7 @@ def main() -> None:
         default_pocket_upload=default_pocket_upload,
         default_catalytic_upload=default_catalytic_upload,
         default_ligand_upload=default_ligand_upload,
+        experiment_plan_override_upload=experiment_plan_override_upload,
         form_payload=_build_form_payload(),
     )
     _render_preflight_report(st.session_state.get("last_preflight"))
@@ -5789,8 +9195,8 @@ def main() -> None:
             else:
                 st.error(message)
 
-    tab_summary, tab_qc, tab_compare, tab_history, tab_ranking, tab_pose, tab_report, tab_logs, tab_diag = st.tabs(
-        ["摘要", "QC/Warning", "运行对比", "历史", "排名结果", "Pose 结果", "执行报告", "日志", "诊断"]
+    tab_summary, tab_qc, tab_compare, tab_history, tab_ranking, tab_pose, tab_report, tab_ai, tab_logs, tab_diag = st.tabs(
+        ["摘要", "QC/Warning", "运行对比", "历史", "排名结果", "Pose 结果", "执行报告", "AI 解释", "日志", "诊断"]
     )
 
     with tab_summary:
@@ -5800,6 +9206,312 @@ def main() -> None:
             st.subheader("执行备注")
             for note in notes:
                 st.write(f"- {note}")
+
+        artifacts = summary.get("artifacts") if isinstance(summary, dict) and isinstance(summary.get("artifacts"), dict) else {}
+        demo_overview_html = (
+            Path(str(artifacts.get("demo_overview_html")))
+            if artifacts.get("demo_overview_html")
+            else _resolve_output_file(
+                "DEMO_OVERVIEW.html",
+                summary=summary if isinstance(summary, dict) else None,
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+        demo_readme_md = (
+            Path(str(artifacts.get("demo_readme_md")))
+            if artifacts.get("demo_readme_md")
+            else _resolve_output_file(
+                "DEMO_README.md",
+                summary=summary if isinstance(summary, dict) else None,
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+        demo_interpretation_md = (
+            Path(str(artifacts.get("demo_interpretation_md")))
+            if artifacts.get("demo_interpretation_md")
+            else _resolve_output_file(
+                "DEMO_INTERPRETATION.md",
+                summary=summary if isinstance(summary, dict) else None,
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+        real_data_starter_readme = (
+            Path(str(artifacts.get("real_data_starter_readme_md")))
+            if artifacts.get("real_data_starter_readme_md")
+            else _resolve_output_file(
+                "REAL_DATA_STARTER",
+                "README_REAL_DATA_STARTER.md",
+                summary=summary if isinstance(summary, dict) else None,
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+        mini_pdb_example_readme = (
+            Path(str(artifacts.get("mini_pdb_example_readme_md")))
+            if artifacts.get("mini_pdb_example_readme_md")
+            else _resolve_output_file(
+                "REAL_DATA_STARTER",
+                "MINI_PDB_EXAMPLE",
+                "README_MINI_PDB_EXAMPLE.md",
+                summary=summary if isinstance(summary, dict) else None,
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+        mini_pdb_example_input_csv = (
+            Path(str(artifacts.get("mini_pdb_example_input_csv")))
+            if artifacts.get("mini_pdb_example_input_csv")
+            else _resolve_output_file(
+                "REAL_DATA_STARTER",
+                "MINI_PDB_EXAMPLE",
+                "input_pose_table.csv",
+                summary=summary if isinstance(summary, dict) else None,
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+        real_data_starter_dir = (
+            real_data_starter_readme.parent
+            if real_data_starter_readme is not None and real_data_starter_readme.exists()
+            else None
+        )
+        mini_pdb_example_dir = (
+            mini_pdb_example_readme.parent
+            if mini_pdb_example_readme is not None and mini_pdb_example_readme.exists()
+            else None
+        )
+        has_demo_outputs = any(
+            path is not None and path.exists()
+            for path in [
+                demo_overview_html,
+                demo_readme_md,
+                demo_interpretation_md,
+                real_data_starter_readme,
+                mini_pdb_example_readme,
+            ]
+        )
+        if has_demo_outputs:
+            st.subheader("Demo 快速导览")
+            st.caption(
+                "当前运行包含 synthetic demo 说明文件。优先打开 HTML 导览页；"
+                "demo 结果只用于流程演示，不代表真实湿实验验证。"
+            )
+            demo_col1, demo_col2, demo_col3, demo_col4 = st.columns(4)
+            if demo_overview_html is not None and demo_overview_html.exists():
+                if demo_col1.button("打开 Demo HTML 导览", use_container_width=True, key="open_demo_overview_html"):
+                    ok, message = _open_local_path(demo_overview_html)
+                    if ok:
+                        st.success(message)
+                    else:
+                        st.error(message)
+                demo_col2.download_button(
+                    label="下载 Demo HTML",
+                    data=demo_overview_html.read_bytes(),
+                    file_name=demo_overview_html.name,
+                    mime="text/html",
+                    use_container_width=True,
+                    key="download_demo_overview_html",
+                )
+            else:
+                demo_col1.button(
+                    "打开 Demo HTML 导览",
+                    use_container_width=True,
+                    disabled=True,
+                    key="open_demo_overview_html_disabled",
+                )
+                demo_col2.button(
+                    "下载 Demo HTML",
+                    use_container_width=True,
+                    disabled=True,
+                    key="download_demo_overview_html_disabled",
+                )
+
+            if demo_interpretation_md is not None and demo_interpretation_md.exists():
+                demo_col3.download_button(
+                    label="下载 Demo 解读",
+                    data=demo_interpretation_md.read_bytes(),
+                    file_name=demo_interpretation_md.name,
+                    mime="text/markdown",
+                    use_container_width=True,
+                    key="download_demo_interpretation_md",
+                )
+                with st.expander("查看 Demo 结果解读"):
+                    st.markdown(_read_text(demo_interpretation_md))
+            else:
+                demo_col3.button(
+                    "下载 Demo 解读",
+                    use_container_width=True,
+                    disabled=True,
+                    key="download_demo_interpretation_md_disabled",
+                )
+
+            if demo_readme_md is not None and demo_readme_md.exists():
+                demo_col4.download_button(
+                    label="下载 Demo README",
+                    data=demo_readme_md.read_bytes(),
+                    file_name=demo_readme_md.name,
+                    mime="text/markdown",
+                    use_container_width=True,
+                    key="download_demo_readme_md",
+                )
+            else:
+                demo_col4.button(
+                    "下载 Demo README",
+                    use_container_width=True,
+                    disabled=True,
+                    key="download_demo_readme_md_disabled",
+                )
+
+            if real_data_starter_readme is not None and real_data_starter_readme.exists():
+                st.caption("想把 demo 换成自己的数据：先使用 `REAL_DATA_STARTER` 里的模板和检查清单。")
+                starter_col1, starter_col2, starter_col3 = st.columns(3)
+                starter_col1.download_button(
+                    label="下载真实数据 starter README",
+                    data=real_data_starter_readme.read_bytes(),
+                    file_name=real_data_starter_readme.name,
+                    mime="text/markdown",
+                    use_container_width=True,
+                    key="download_real_data_starter_readme_md",
+                )
+                if starter_col2.button(
+                    "打开真实数据 starter 文件夹",
+                    use_container_width=True,
+                    key="open_real_data_starter_dir",
+                ):
+                    ok, message = _open_local_path(real_data_starter_dir or real_data_starter_readme.parent)
+                    if ok:
+                        st.success(message)
+                    else:
+                        st.error(message)
+                if mini_pdb_example_readme is not None and mini_pdb_example_readme.exists():
+                    if starter_col3.button(
+                        "打开 mini PDB 示例",
+                        use_container_width=True,
+                        key="open_mini_pdb_example_dir",
+                    ):
+                        ok, message = _open_local_path(mini_pdb_example_dir or mini_pdb_example_readme.parent)
+                        if ok:
+                            st.success(message)
+                        else:
+                            st.error(message)
+                    with st.expander("查看 mini PDB 示例说明"):
+                        st.markdown(_read_text(mini_pdb_example_readme))
+                        if mini_pdb_example_input_csv is not None and mini_pdb_example_input_csv.exists():
+                            st.download_button(
+                                label="下载 mini input_pose_table.csv",
+                                data=mini_pdb_example_input_csv.read_bytes(),
+                                file_name=mini_pdb_example_input_csv.name,
+                                mime="text/csv",
+                                use_container_width=True,
+                                key="download_mini_pdb_example_input_csv",
+                            )
+                else:
+                    starter_col3.button(
+                        "打开 mini PDB 示例",
+                        use_container_width=True,
+                        disabled=True,
+                        key="open_mini_pdb_example_dir_disabled",
+                    )
+
+        batch_summary_md = (
+            Path(str(artifacts.get("batch_decision_summary_md")))
+            if artifacts.get("batch_decision_summary_md")
+            else _resolve_output_file(
+                "batch_decision_summary",
+                "batch_decision_summary.md",
+                summary=summary if isinstance(summary, dict) else None,
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+        batch_summary_json = (
+            Path(str(artifacts.get("batch_decision_summary_json")))
+            if artifacts.get("batch_decision_summary_json")
+            else _resolve_output_file(
+                "batch_decision_summary",
+                "batch_decision_summary.json",
+                summary=summary if isinstance(summary, dict) else None,
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+        batch_cards_csv = (
+            Path(str(artifacts.get("batch_decision_summary_cards_csv")))
+            if artifacts.get("batch_decision_summary_cards_csv")
+            else _resolve_output_file(
+                "batch_decision_summary",
+                "batch_decision_summary_cards.csv",
+                summary=summary if isinstance(summary, dict) else None,
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+        if (
+            (batch_summary_md is not None and batch_summary_md.exists())
+            or (batch_summary_json is not None and batch_summary_json.exists())
+            or (batch_cards_csv is not None and batch_cards_csv.exists())
+        ):
+            st.subheader("本批次结论摘要")
+            st.caption(
+                "把 Quality Gate、共识排名、分数解释卡片、实验计划和验证证据汇总成一页："
+                "能不能解读、优先看谁、先修什么风险。"
+            )
+            batch_payload = _load_json(batch_summary_json) if batch_summary_json is not None and batch_summary_json.exists() else None
+            if isinstance(batch_payload, dict):
+                batch_decision = batch_payload.get("batch_decision") if isinstance(batch_payload.get("batch_decision"), dict) else {}
+                quality_gate = batch_payload.get("quality_gate") if isinstance(batch_payload.get("quality_gate"), dict) else {}
+                validation_evidence = (
+                    batch_payload.get("validation_evidence")
+                    if isinstance(batch_payload.get("validation_evidence"), dict)
+                    else {}
+                )
+                highlights = batch_payload.get("candidate_highlights") if isinstance(batch_payload.get("candidate_highlights"), dict) else {}
+                best_candidate = highlights.get("best_candidate") if isinstance(highlights.get("best_candidate"), dict) else {}
+                next_candidate = (
+                    highlights.get("next_experiment_candidate")
+                    if isinstance(highlights.get("next_experiment_candidate"), dict)
+                    else {}
+                )
+                batch_col1, batch_col2, batch_col3, batch_col4 = st.columns(4)
+                batch_col1.metric("Quality Gate", str(quality_gate.get("overall_status") or "UNKNOWN"))
+                batch_col2.metric("最高排名候选", str(best_candidate.get("nanobody_id") or "N/A"))
+                batch_col3.metric("下一轮优先候选", str(next_candidate.get("nanobody_id") or "N/A"))
+                validation_status = str(validation_evidence.get("audit_status") or batch_decision.get("validation_evidence_status") or "UNKNOWN")
+                validation_coverage = _ratio_text(validation_evidence.get("top_k_validation_coverage"))
+                batch_col4.metric("验证证据", validation_status, validation_coverage)
+                if batch_decision.get("summary"):
+                    st.info(str(batch_decision.get("summary")))
+                if batch_decision.get("recommended_next_action"):
+                    st.write(str(batch_decision.get("recommended_next_action")))
+                if validation_evidence.get("summary"):
+                    st.caption(f"验证证据：{validation_evidence.get('summary')}")
+            download_cols = st.columns(3)
+            if batch_summary_md is not None and batch_summary_md.exists():
+                download_cols[0].download_button(
+                    label="下载批次摘要 Markdown",
+                    data=batch_summary_md.read_bytes(),
+                    file_name=batch_summary_md.name,
+                    mime="text/markdown",
+                    use_container_width=True,
+                    key="download_batch_decision_summary_md",
+                )
+                with st.expander("查看本批次结论摘要"):
+                    st.markdown(_read_text(batch_summary_md))
+            if batch_summary_json is not None and batch_summary_json.exists():
+                download_cols[1].download_button(
+                    label="下载批次摘要 JSON",
+                    data=batch_summary_json.read_bytes(),
+                    file_name=batch_summary_json.name,
+                    mime="application/json",
+                    use_container_width=True,
+                    key="download_batch_decision_summary_json",
+                )
+            if batch_cards_csv is not None and batch_cards_csv.exists():
+                download_cols[2].download_button(
+                    label="下载候选结论卡 CSV",
+                    data=batch_cards_csv.read_bytes(),
+                    file_name=batch_cards_csv.name,
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_batch_decision_summary_cards_csv",
+                )
+                batch_cards_df = _load_csv(batch_cards_csv)
+                if batch_cards_df is not None and not batch_cards_df.empty:
+                    st.dataframe(batch_cards_df, use_container_width=True, hide_index=True)
 
         st.subheader("训练摘要")
         _render_training_summary_panel(
@@ -6029,6 +9741,10 @@ def main() -> None:
                     use_container_width=True,
                     key="download_filtered_history_csv",
                 )
+                with st.expander("跨批次实验状态汇总"):
+                    _render_global_experiment_ledger_panel()
+                with st.expander("结果自动归档与长期趋势"):
+                    _render_result_archive_panel()
             st.caption("可在左侧“运行历史”区域加载某次历史结果，并恢复对应表单参数；需要多次运行对比时，直接切到“运行对比”页。")
 
             with st.expander("运行产物清理工具"):
@@ -6122,6 +9838,77 @@ def main() -> None:
             artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
             ml_ranking_csv = Path(str(artifacts.get("ml_ranking_csv"))) if artifacts.get("ml_ranking_csv") else None
             rule_ranking_csv = Path(str(artifacts.get("rule_ranking_csv"))) if artifacts.get("rule_ranking_csv") else None
+            consensus_ranking_csv = Path(str(artifacts.get("consensus_ranking_csv"))) if artifacts.get("consensus_ranking_csv") else None
+            score_explanation_cards_csv = (
+                Path(str(artifacts.get("score_explanation_cards_csv")))
+                if artifacts.get("score_explanation_cards_csv")
+                else None
+            )
+            score_explanation_cards_html = (
+                Path(str(artifacts.get("score_explanation_cards_html")))
+                if artifacts.get("score_explanation_cards_html")
+                else None
+            )
+            score_explanation_cards_md = (
+                Path(str(artifacts.get("score_explanation_cards_md")))
+                if artifacts.get("score_explanation_cards_md")
+                else None
+            )
+            parameter_sensitivity_candidate_csv = (
+                Path(str(artifacts.get("parameter_sensitivity_candidate_csv")))
+                if artifacts.get("parameter_sensitivity_candidate_csv")
+                else None
+            )
+            parameter_sensitivity_report_md = (
+                Path(str(artifacts.get("parameter_sensitivity_report_md")))
+                if artifacts.get("parameter_sensitivity_report_md")
+                else None
+            )
+            candidate_report_index_html = Path(str(artifacts.get("candidate_report_index_html"))) if artifacts.get("candidate_report_index_html") else None
+            candidate_report_zip = Path(str(artifacts.get("candidate_report_zip"))) if artifacts.get("candidate_report_zip") else None
+            candidate_pairwise_comparisons_csv = (
+                Path(str(artifacts.get("candidate_pairwise_comparisons_csv")))
+                if artifacts.get("candidate_pairwise_comparisons_csv")
+                else None
+            )
+            candidate_group_comparison_summary_csv = (
+                Path(str(artifacts.get("candidate_group_comparison_summary_csv")))
+                if artifacts.get("candidate_group_comparison_summary_csv")
+                else None
+            )
+            candidate_comparison_report_md = (
+                Path(str(artifacts.get("candidate_comparison_report_md")))
+                if artifacts.get("candidate_comparison_report_md")
+                else None
+            )
+            experiment_suggestions_csv = Path(str(artifacts.get("experiment_suggestions_csv"))) if artifacts.get("experiment_suggestions_csv") else None
+            experiment_plan_csv = Path(str(artifacts.get("experiment_plan_csv"))) if artifacts.get("experiment_plan_csv") else None
+            experiment_plan_md = Path(str(artifacts.get("experiment_plan_md"))) if artifacts.get("experiment_plan_md") else None
+            experiment_plan_state_ledger_csv = (
+                Path(str(artifacts.get("experiment_plan_state_ledger_csv")))
+                if artifacts.get("experiment_plan_state_ledger_csv")
+                else None
+            )
+            validation_evidence_summary_json = (
+                Path(str(artifacts.get("validation_evidence_summary_json")))
+                if artifacts.get("validation_evidence_summary_json")
+                else None
+            )
+            validation_evidence_report_md = (
+                Path(str(artifacts.get("validation_evidence_report_md")))
+                if artifacts.get("validation_evidence_report_md")
+                else None
+            )
+            validation_evidence_topk_csv = (
+                Path(str(artifacts.get("validation_evidence_topk_csv")))
+                if artifacts.get("validation_evidence_topk_csv")
+                else None
+            )
+            validation_evidence_action_items_csv = (
+                Path(str(artifacts.get("validation_evidence_action_items_csv")))
+                if artifacts.get("validation_evidence_action_items_csv")
+                else None
+            )
             ranking_preview_rows = st.number_input(
                 "每个排名表预览前 N 行",
                 min_value=5,
@@ -6131,6 +9918,804 @@ def main() -> None:
                 key="ranking_preview_rows",
             )
             ranking_filter_text = str(st.text_input("按 nanobody_id 过滤", key="ranking_filter_text") or "").strip()
+
+            if (
+                (score_explanation_cards_csv is not None and score_explanation_cards_csv.exists())
+                or (score_explanation_cards_html is not None and score_explanation_cards_html.exists())
+                or (score_explanation_cards_md is not None and score_explanation_cards_md.exists())
+            ):
+                st.subheader("分数解释卡片")
+                st.caption(
+                    "把 consensus_score、confidence、Rule/ML 一致性、QC 风险和 label 覆盖翻译成可读结论；"
+                    "只解释已有结果，不改动排名分数。"
+                )
+                if score_explanation_cards_csv is not None and score_explanation_cards_csv.exists():
+                    score_card_df = _load_csv(score_explanation_cards_csv)
+                    if score_card_df is not None:
+                        if ranking_filter_text and "nanobody_id" in score_card_df.columns:
+                            score_card_df = score_card_df[
+                                score_card_df["nanobody_id"].astype(str).str.contains(
+                                    ranking_filter_text,
+                                    case=False,
+                                    regex=False,
+                                    na=False,
+                                )
+                            ]
+                        score_card_view_df, score_card_export_df = _render_dataframe_view_controls(
+                            score_card_df,
+                            key_prefix="score_explanation_cards_view",
+                            preferred_columns=[
+                                "nanobody_id",
+                                "consensus_rank",
+                                "score_band",
+                                "confidence_level",
+                                "decision_tier",
+                                "score_meaning",
+                                "main_positive_factors",
+                                "main_risk_factors",
+                                "recommended_action",
+                                "label_status",
+                            ],
+                            default_sort_column="consensus_rank",
+                            default_descending=False,
+                        )
+                        st.dataframe(score_card_view_df.head(int(ranking_preview_rows)), use_container_width=True)
+                        score_card_col1, score_card_col2 = st.columns(2)
+                        score_card_col1.download_button(
+                            label="下载分数解释卡片 CSV",
+                            data=score_card_export_df.to_csv(index=False).encode("utf-8"),
+                            file_name="score_explanation_cards_filtered.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                            key="download_score_explanation_cards_csv",
+                        )
+                        if score_explanation_cards_html is not None and score_explanation_cards_html.exists():
+                            score_card_col2.download_button(
+                                label="下载分数解释卡片 HTML",
+                                data=score_explanation_cards_html.read_bytes(),
+                                file_name=score_explanation_cards_html.name,
+                                mime="text/html",
+                                use_container_width=True,
+                                key="download_score_explanation_cards_html",
+                            )
+                if score_explanation_cards_html is not None and score_explanation_cards_html.exists():
+                    with st.expander("预览分数解释卡片 HTML"):
+                        st.components.v1.html(_read_text(score_explanation_cards_html), height=620, scrolling=True)
+                if score_explanation_cards_md is not None and score_explanation_cards_md.exists():
+                    with st.expander("查看分数解释卡片 Markdown"):
+                        st.markdown(_read_text(score_explanation_cards_md))
+
+            if (
+                (candidate_report_index_html is not None and candidate_report_index_html.exists())
+                or (candidate_report_zip is not None and candidate_report_zip.exists())
+            ):
+                st.subheader("候选报告卡")
+                st.caption("报告卡从共识排名、Rule/ML 排名、pose/QC 和候选对比信息汇总生成，可直接打开 HTML 索引或下载 zip 发送。")
+                report_card_col1, report_card_col2 = st.columns(2)
+                if candidate_report_index_html is not None and candidate_report_index_html.exists():
+                    if report_card_col1.button("打开候选报告卡索引", use_container_width=True, key="open_candidate_report_index"):
+                        ok, message = _open_local_path(candidate_report_index_html)
+                        if ok:
+                            st.success(message)
+                        else:
+                            st.error(message)
+                    report_card_col1.download_button(
+                        label="下载报告卡索引 HTML",
+                        data=candidate_report_index_html.read_bytes(),
+                        file_name=candidate_report_index_html.name,
+                        mime="text/html",
+                        use_container_width=True,
+                        key="download_candidate_report_index_html",
+                    )
+                if candidate_report_zip is not None and candidate_report_zip.exists():
+                    report_card_col2.download_button(
+                        label="下载全部候选报告卡 zip",
+                        data=candidate_report_zip.read_bytes(),
+                        file_name=candidate_report_zip.name,
+                        mime="application/zip",
+                        use_container_width=True,
+                        key="download_candidate_report_zip",
+                    )
+
+            if candidate_pairwise_comparisons_csv is not None and candidate_pairwise_comparisons_csv.exists():
+                st.subheader("候选对比解释")
+                st.caption("该表解释为什么高排名候选排在相邻候选之前，并列出对方候选的反向优势；不重新训练、不改变排名。")
+                comparison_df = _load_csv(candidate_pairwise_comparisons_csv)
+                if comparison_df is not None:
+                    if ranking_filter_text:
+                        mask = pd.Series(False, index=comparison_df.index)
+                        for col in ["winner_nanobody_id", "runner_up_nanobody_id"]:
+                            if col in comparison_df.columns:
+                                mask = mask | comparison_df[col].astype(str).str.contains(
+                                    ranking_filter_text,
+                                    case=False,
+                                    regex=False,
+                                    na=False,
+                                )
+                        comparison_df = comparison_df[mask]
+                    comparison_view_df, comparison_export_df = _render_dataframe_view_controls(
+                        comparison_df,
+                        key_prefix="candidate_pairwise_comparison_view",
+                        preferred_columns=[
+                            "winner_nanobody_id",
+                            "runner_up_nanobody_id",
+                            "consensus_score_gap",
+                            "is_close_decision",
+                            "winner_confidence_level",
+                            "winner_key_advantages",
+                            "runner_up_counterpoints",
+                            "comparison_explanation",
+                        ],
+                        default_sort_column="consensus_score_gap",
+                        default_descending=False,
+                    )
+                    st.dataframe(comparison_view_df.head(int(ranking_preview_rows)), use_container_width=True)
+                    candidate_compare_col1, candidate_compare_col2 = st.columns(2)
+                    candidate_compare_col1.download_button(
+                        label="下载候选对比可见视图 CSV",
+                        data=comparison_view_df.to_csv(index=False).encode("utf-8"),
+                        file_name="candidate_pairwise_comparisons_filtered.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_candidate_pairwise_comparison_view_csv",
+                    )
+                    candidate_compare_col2.download_button(
+                        label="下载候选对比全筛选结果 CSV",
+                        data=comparison_export_df.to_csv(index=False).encode("utf-8"),
+                        file_name="candidate_pairwise_comparisons_filtered_full.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_candidate_pairwise_comparison_full_csv",
+                    )
+                if candidate_comparison_report_md is not None and candidate_comparison_report_md.exists():
+                    with st.expander("查看候选对比解释报告"):
+                        st.markdown(_read_text(candidate_comparison_report_md))
+
+            if candidate_group_comparison_summary_csv is not None and candidate_group_comparison_summary_csv.exists():
+                with st.expander("候选分组对比小结"):
+                    group_comparison_df = _load_csv(candidate_group_comparison_summary_csv)
+                    if group_comparison_df is None or group_comparison_df.empty:
+                        st.info("当前没有可用的候选分组对比小结。")
+                    else:
+                        preferred_group_columns = [
+                            "group_column",
+                            "group_value",
+                            "candidate_count",
+                            "best_nanobody_id",
+                            "mean_consensus_score",
+                            "low_confidence_count",
+                            "close_decision_count",
+                            "representative_strengths",
+                            "representative_risks",
+                            "group_summary_text",
+                        ]
+                        group_view_df, group_export_df = _render_dataframe_view_controls(
+                            group_comparison_df,
+                            key_prefix="candidate_group_comparison_view",
+                            preferred_columns=preferred_group_columns,
+                            default_sort_column="best_consensus_rank",
+                            default_descending=False,
+                        )
+                        st.dataframe(group_view_df, use_container_width=True)
+                        st.download_button(
+                            label="下载候选分组对比小结 CSV",
+                            data=group_export_df.to_csv(index=False).encode("utf-8"),
+                            file_name="candidate_group_comparison_summary.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                            key="download_candidate_group_comparison_summary_csv",
+                        )
+
+            if consensus_ranking_csv is not None and consensus_ranking_csv.exists():
+                with st.expander("自定义候选对比（手工选择 2 到 5 个 nanobody）"):
+                    custom_consensus_df = _load_csv(consensus_ranking_csv)
+                    if custom_consensus_df is None or custom_consensus_df.empty or "nanobody_id" not in custom_consensus_df.columns:
+                        st.info("当前 consensus_ranking.csv 不包含可用的 nanobody_id，无法生成自定义对比。")
+                    else:
+                        custom_work_df = custom_consensus_df.copy()
+                        if "consensus_rank" in custom_work_df.columns:
+                            custom_work_df["_rank_sort"] = pd.to_numeric(
+                                custom_work_df["consensus_rank"],
+                                errors="coerce",
+                            )
+                            custom_work_df = custom_work_df.sort_values(
+                                "_rank_sort",
+                                ascending=True,
+                                na_position="last",
+                            ).drop(columns=["_rank_sort"])
+                        elif "consensus_score" in custom_work_df.columns:
+                            custom_work_df["_score_sort"] = pd.to_numeric(
+                                custom_work_df["consensus_score"],
+                                errors="coerce",
+                            )
+                            custom_work_df = custom_work_df.sort_values(
+                                "_score_sort",
+                                ascending=False,
+                                na_position="last",
+                            ).drop(columns=["_score_sort"])
+                        candidate_ids = custom_work_df["nanobody_id"].astype(str).drop_duplicates().tolist()
+                        label_map: dict[str, str] = {}
+                        for _, row in custom_work_df.drop_duplicates(subset=["nanobody_id"]).iterrows():
+                            nanobody_id = str(row.get("nanobody_id") or "")
+                            rank_text = str(row.get("consensus_rank") or "").strip()
+                            score_text = _fmt_metric(pd.to_numeric(pd.Series([row.get("consensus_score")]), errors="coerce").iloc[0])
+                            label_map[nanobody_id] = f"#{rank_text or '?'} | {nanobody_id} | score={score_text}"
+                        selected_custom_ids = st.multiselect(
+                            "选择候选",
+                            options=candidate_ids,
+                            default=candidate_ids[: min(2, len(candidate_ids))],
+                            format_func=lambda item: label_map.get(str(item), str(item)),
+                            key="custom_candidate_comparison_ids",
+                        )
+                        custom_pair_mode = st.selectbox(
+                            "自定义对比方式",
+                            options=["all", "adjacent", "top_vs_rest"],
+                            index=0,
+                            format_func=lambda item: {
+                                "all": "两两全部对比",
+                                "adjacent": "按排名相邻对比",
+                                "top_vs_rest": "最高排名 vs 其余",
+                            }.get(str(item), str(item)),
+                            key="custom_candidate_comparison_pair_mode",
+                        )
+                        custom_param_col1, custom_param_col2 = st.columns(2)
+                        custom_close_delta = custom_param_col1.number_input(
+                            "close_score_delta",
+                            min_value=0.0,
+                            max_value=1.0,
+                            value=0.03,
+                            step=0.01,
+                            format="%.3f",
+                            key="custom_candidate_close_score_delta",
+                        )
+                        custom_min_delta = custom_param_col2.number_input(
+                            "min_metric_delta",
+                            min_value=0.0,
+                            max_value=1.0,
+                            value=0.02,
+                            step=0.01,
+                            format="%.3f",
+                            key="custom_candidate_min_metric_delta",
+                        )
+                        if len(selected_custom_ids) < 2:
+                            st.info("至少选择 2 个候选。")
+                        elif len(selected_custom_ids) > 5:
+                            st.warning("为保证解释可读性，自定义对比一次最多选择 5 个候选。")
+                        else:
+                            try:
+                                custom_result = build_candidate_comparison_outputs(
+                                    custom_work_df,
+                                    top_n=len(selected_custom_ids),
+                                    pair_mode=str(custom_pair_mode),
+                                    selected_nanobody_ids=[str(item) for item in selected_custom_ids],
+                                    close_score_delta=float(custom_close_delta),
+                                    min_metric_delta=float(custom_min_delta),
+                                    consensus_csv=consensus_ranking_csv,
+                                )
+                                custom_pairwise_df = custom_result["pairwise"]
+                                custom_tradeoff_df = custom_result["tradeoffs"]
+                                custom_group_summary_df = custom_result.get("group_summary", pd.DataFrame())
+                                custom_summary = custom_result["summary"]
+                                metric_col1, metric_col2, metric_col3 = st.columns(3)
+                                metric_col1.metric("候选数", int(custom_summary.get("top_candidate_count") or 0))
+                                metric_col2.metric("对比数", int(custom_summary.get("pairwise_comparison_count") or 0))
+                                metric_col3.metric("Close decisions", int(custom_summary.get("close_decision_count") or 0))
+                                custom_pairwise_view_df, custom_pairwise_export_df = _render_dataframe_view_controls(
+                                    custom_pairwise_df,
+                                    key_prefix="custom_candidate_pairwise_view",
+                                    preferred_columns=[
+                                        "winner_nanobody_id",
+                                        "runner_up_nanobody_id",
+                                        "consensus_score_gap",
+                                        "is_close_decision",
+                                        "winner_key_advantages",
+                                        "runner_up_counterpoints",
+                                        "comparison_explanation",
+                                    ],
+                                    default_sort_column="consensus_score_gap",
+                                    default_descending=False,
+                                )
+                                st.dataframe(custom_pairwise_view_df, use_container_width=True)
+                                with st.expander("查看自定义候选 trade-off 表"):
+                                    st.dataframe(custom_tradeoff_df, use_container_width=True)
+                                if isinstance(custom_group_summary_df, pd.DataFrame) and not custom_group_summary_df.empty:
+                                    with st.expander("查看自定义候选分组小结"):
+                                        st.dataframe(custom_group_summary_df, use_container_width=True)
+                                with st.expander("查看自定义对比 Markdown 报告"):
+                                    st.markdown(str(custom_result["report"]))
+                                custom_download_col1, custom_download_col2, custom_download_col3 = st.columns(3)
+                                custom_download_col1.download_button(
+                                    label="下载自定义 pairwise CSV",
+                                    data=custom_pairwise_export_df.to_csv(index=False).encode("utf-8"),
+                                    file_name="custom_candidate_pairwise_comparisons.csv",
+                                    mime="text/csv",
+                                    use_container_width=True,
+                                    key="download_custom_candidate_pairwise_csv",
+                                )
+                                custom_download_col2.download_button(
+                                    label="下载自定义 trade-off CSV",
+                                    data=custom_tradeoff_df.to_csv(index=False).encode("utf-8"),
+                                    file_name="custom_candidate_tradeoff_table.csv",
+                                    mime="text/csv",
+                                    use_container_width=True,
+                                    key="download_custom_candidate_tradeoff_csv",
+                                )
+                                custom_download_col3.download_button(
+                                    label="下载自定义 Markdown",
+                                    data=str(custom_result["report"]).encode("utf-8"),
+                                    file_name="custom_candidate_comparison_report.md",
+                                    mime="text/markdown",
+                                    use_container_width=True,
+                                    key="download_custom_candidate_comparison_md",
+                                )
+                                if st.button(
+                                    "保存自定义对比到本次输出目录",
+                                    use_container_width=True,
+                                    key="save_custom_candidate_comparison_outputs",
+                                ):
+                                    custom_root = (
+                                        candidate_pairwise_comparisons_csv.parent
+                                        if candidate_pairwise_comparisons_csv is not None
+                                        else consensus_ranking_csv.parent.parent / "candidate_comparisons"
+                                    )
+                                    selected_slug = _slugify_name("_".join([str(item) for item in selected_custom_ids]))
+                                    custom_dir = custom_root / "custom_comparisons" / selected_slug
+                                    custom_dir.mkdir(parents=True, exist_ok=True)
+                                    custom_tradeoff_df.to_csv(custom_dir / "custom_candidate_tradeoff_table.csv", index=False)
+                                    custom_pairwise_df.to_csv(custom_dir / "custom_candidate_pairwise_comparisons.csv", index=False)
+                                    if isinstance(custom_group_summary_df, pd.DataFrame):
+                                        custom_group_summary_df.to_csv(
+                                            custom_dir / "custom_candidate_group_comparison_summary.csv",
+                                            index=False,
+                                        )
+                                    _write_json(custom_dir / "custom_candidate_comparison_summary.json", custom_summary)
+                                    _write_text(custom_dir / "custom_candidate_comparison_report.md", str(custom_result["report"]))
+                                    st.success(f"已保存自定义候选对比: {custom_dir}")
+                            except Exception as exc:
+                                st.error(f"生成自定义候选对比失败: {exc}")
+
+            if experiment_plan_csv is not None and experiment_plan_csv.exists():
+                st.subheader("本轮实验计划单")
+                st.caption("计划单基于下一轮实验建议生成，加入总预算、分层 quota 和 diversity group quota；不改变原始排名或分数。")
+                plan_df = _load_csv(experiment_plan_csv)
+                if plan_df is not None:
+                    if ranking_filter_text and "nanobody_id" in plan_df.columns:
+                        plan_df = plan_df[
+                            plan_df["nanobody_id"].astype(str).str.contains(
+                                ranking_filter_text,
+                                case=False,
+                                regex=False,
+                                na=False,
+                            )
+                        ]
+                    plan_view_df, plan_export_df = _render_dataframe_view_controls(
+                        plan_df,
+                        key_prefix="experiment_plan_view",
+                        preferred_columns=[
+                            "plan_rank",
+                            "nanobody_id",
+                            "plan_decision",
+                            "plan_phase",
+                            "suggestion_tier",
+                            "diversity_group",
+                            "manual_plan_action",
+                            "manual_plan_override_applied",
+                            "experiment_owner",
+                            "experiment_status",
+                            "experiment_result",
+                            "validation_label",
+                            "experiment_cost",
+                            "experiment_priority_score",
+                            "diversity_adjusted_priority_score",
+                            "plan_reason",
+                            "experiment_note",
+                            "recommended_next_action",
+                        ],
+                        default_sort_column="plan_rank",
+                        default_descending=False,
+                    )
+                    st.dataframe(plan_view_df.head(int(ranking_preview_rows)), use_container_width=True)
+                    plan_col1, plan_col2 = st.columns(2)
+                    plan_col1.download_button(
+                        label="下载当前实验计划视图 CSV",
+                        data=plan_view_df.to_csv(index=False).encode("utf-8"),
+                        file_name="experiment_plan_filtered.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_experiment_plan_csv",
+                    )
+                    plan_col2.download_button(
+                        label="下载完整实验计划 CSV",
+                        data=plan_export_df.to_csv(index=False).encode("utf-8"),
+                        file_name="experiment_plan_filtered_full.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_full_experiment_plan_csv",
+                    )
+                    with st.expander("编辑实验状态并生成下一轮 override CSV"):
+                        st.caption(
+                            "这里不会改动本次模型分数；只把人工决策、完成状态、负责人、成本和备注整理成 "
+                            "`experiment_plan_override.csv`，供下一轮运行自动继承。"
+                        )
+                        editor_base_df = _build_experiment_plan_override_editor_df(plan_export_df)
+                        edited_override_df = st.data_editor(
+                            editor_base_df,
+                            hide_index=True,
+                            use_container_width=True,
+                            num_rows="fixed",
+                            key=f"experiment_plan_override_editor_{str(experiment_plan_csv)}",
+                            column_config={
+                                "nanobody_id": st.column_config.TextColumn("nanobody_id", disabled=True),
+                                "plan_override": st.column_config.SelectboxColumn(
+                                    "plan_override",
+                                    options=PLAN_OVERRIDE_ACTION_OPTIONS,
+                                    help="include/exclude/standby/defer 会覆盖自动计划；留空则只继承状态字段。",
+                                ),
+                                "experiment_status": st.column_config.SelectboxColumn(
+                                    "experiment_status",
+                                    options=PLAN_STATUS_OPTIONS,
+                                    help="completed/blocked/in_progress 会在下一轮被识别为状态回灌。",
+                                ),
+                                "experiment_result": st.column_config.SelectboxColumn(
+                                    "experiment_result",
+                                    options=PLAN_RESULT_OPTIONS,
+                                    help="只有 positive/negative 或显式 validation_label 才会进入训练标签回灌。",
+                                ),
+                                "validation_label": st.column_config.SelectboxColumn(
+                                    "validation_label",
+                                    options=PLAN_LABEL_OPTIONS,
+                                    help="可选显式标签：1=阳性/有效阻断，0=阴性/无效阻断。",
+                                ),
+                                "experiment_owner": st.column_config.TextColumn("experiment_owner"),
+                                "experiment_cost": st.column_config.TextColumn("experiment_cost"),
+                                "experiment_note": st.column_config.TextColumn("experiment_note"),
+                                "manual_plan_reason": st.column_config.TextColumn("manual_plan_reason"),
+                            },
+                        )
+                        edited_override_df = _sanitize_plan_override_editor_df(edited_override_df)
+                        edited_override_bytes = edited_override_df.to_csv(index=False).encode("utf-8")
+                        editor_col1, editor_col2, editor_col3 = st.columns(3)
+                        editor_col1.download_button(
+                            label="下载编辑后的 override CSV",
+                            data=edited_override_bytes,
+                            file_name="experiment_plan_override_edited.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                            key="download_edited_experiment_plan_override_csv",
+                        )
+                        save_override_clicked = editor_col2.button(
+                            "保存到本次运行目录",
+                            use_container_width=True,
+                            key="save_edited_experiment_plan_override_csv",
+                        )
+                        save_and_reuse_clicked = editor_col3.button(
+                            "保存并用于下一轮",
+                            use_container_width=True,
+                            key="save_and_reuse_experiment_plan_override_csv",
+                        )
+                        if save_override_clicked or save_and_reuse_clicked:
+                            override_out = experiment_plan_csv.parent / "experiment_plan_override_edited.csv"
+                            edited_override_df.to_csv(override_out, index=False)
+                            message = f"已保存实验计划覆盖文件: {override_out}"
+                            if save_and_reuse_clicked:
+                                st.session_state["_pending_experiment_plan_override_local_path"] = str(override_out)
+                                st.session_state["_pending_experiment_plan_override_message"] = (
+                                    "已把编辑后的实验计划覆盖文件设置为下一轮运行输入。"
+                                )
+                                st.success("已保存，下一次运行会自动使用该 override CSV。")
+                                st.rerun()
+                            else:
+                                st.success(message)
+                        if experiment_plan_state_ledger_csv is not None and experiment_plan_state_ledger_csv.exists():
+                            st.download_button(
+                                label="下载当前状态 ledger CSV",
+                                data=experiment_plan_state_ledger_csv.read_bytes(),
+                                file_name=experiment_plan_state_ledger_csv.name,
+                                mime="text/csv",
+                                use_container_width=True,
+                                key="download_experiment_plan_state_ledger_csv",
+                            )
+                if experiment_plan_md is not None and experiment_plan_md.exists():
+                    with st.expander("查看实验计划 Markdown"):
+                        st.markdown(_read_text(experiment_plan_md))
+
+            if (
+                (validation_evidence_summary_json is not None and validation_evidence_summary_json.exists())
+                or (validation_evidence_topk_csv is not None and validation_evidence_topk_csv.exists())
+                or (validation_evidence_action_items_csv is not None and validation_evidence_action_items_csv.exists())
+            ):
+                st.subheader("真实验证证据审计")
+                st.caption(
+                    "检查当前 top 候选是否已有明确 validation_label 或 experiment_result；"
+                    "只评估证据覆盖，不改动模型分数或排名。"
+                )
+                evidence_payload = (
+                    _load_json(validation_evidence_summary_json)
+                    if validation_evidence_summary_json is not None and validation_evidence_summary_json.exists()
+                    else {}
+                )
+                if evidence_payload:
+                    ev_col1, ev_col2, ev_col3, ev_col4 = st.columns(4)
+                    evidence_status = str(evidence_payload.get("audit_status") or "UNKNOWN").upper()
+                    ev_col1.metric("Evidence Audit", evidence_status)
+                    ev_col2.metric("Label-ready", int(evidence_payload.get("label_ready_count") or 0))
+                    ev_col3.metric("Top-k Coverage", _ratio_text(evidence_payload.get("top_k_validation_coverage")))
+                    ev_col4.metric("Calibration Ready", "Yes" if bool(evidence_payload.get("calibration_ready")) else "No")
+                    if evidence_status == "PASS":
+                        st.success("当前验证证据达到最小可用标准。")
+                    elif evidence_status == "FAIL":
+                        st.error("验证证据审计失败，建议先确认 consensus_ranking.csv 是否存在且可读。")
+                    else:
+                        st.warning("当前排序还缺少足够真实验证证据，建议先补 top 候选实验结果。")
+                    next_actions = evidence_payload.get("next_actions") if isinstance(evidence_payload.get("next_actions"), list) else []
+                    for action in next_actions[:4]:
+                        st.write(f"- {action}")
+
+                if validation_evidence_topk_csv is not None and validation_evidence_topk_csv.exists():
+                    topk_evidence_df = _load_csv(validation_evidence_topk_csv)
+                    if topk_evidence_df is not None:
+                        if ranking_filter_text and "nanobody_id" in topk_evidence_df.columns:
+                            topk_evidence_df = topk_evidence_df[
+                                topk_evidence_df["nanobody_id"].astype(str).str.contains(
+                                    ranking_filter_text,
+                                    case=False,
+                                    regex=False,
+                                    na=False,
+                                )
+                            ]
+                        topk_view_df, topk_export_df = _render_dataframe_view_controls(
+                            topk_evidence_df,
+                            key_prefix="validation_evidence_topk_view",
+                            preferred_columns=[
+                                "nanobody_id",
+                                "consensus_rank",
+                                "consensus_score",
+                                "confidence_level",
+                                "validation_label_ready",
+                                "validation_label",
+                                "validation_gap",
+                                "experiment_status",
+                                "experiment_result",
+                                "recommended_action",
+                            ],
+                            default_sort_column="consensus_rank",
+                            default_descending=False,
+                        )
+                        st.dataframe(topk_view_df.head(int(ranking_preview_rows)), use_container_width=True)
+                        st.download_button(
+                            label="下载 top-k 验证证据视图 CSV",
+                            data=topk_export_df.to_csv(index=False).encode("utf-8"),
+                            file_name="validation_evidence_topk_filtered.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                            key="download_validation_evidence_topk_filtered_csv",
+                        )
+
+                if validation_evidence_action_items_csv is not None and validation_evidence_action_items_csv.exists():
+                    with st.expander("查看验证证据行动清单"):
+                        action_items_df = _load_csv(validation_evidence_action_items_csv)
+                        if action_items_df is None or action_items_df.empty:
+                            st.info("当前没有可展示的验证证据行动项。")
+                        else:
+                            st.dataframe(action_items_df, use_container_width=True, hide_index=True)
+                            st.download_button(
+                                label="下载验证证据行动清单 CSV",
+                                data=action_items_df.to_csv(index=False).encode("utf-8"),
+                                file_name=validation_evidence_action_items_csv.name,
+                                mime="text/csv",
+                                use_container_width=True,
+                                key="download_validation_evidence_action_items_csv",
+                            )
+
+                evidence_download_col1, evidence_download_col2 = st.columns(2)
+                if validation_evidence_summary_json is not None and validation_evidence_summary_json.exists():
+                    evidence_download_col1.download_button(
+                        label="下载验证证据摘要 JSON",
+                        data=validation_evidence_summary_json.read_bytes(),
+                        file_name=validation_evidence_summary_json.name,
+                        mime="application/json",
+                        use_container_width=True,
+                        key="download_validation_evidence_summary_json",
+                    )
+                if validation_evidence_report_md is not None and validation_evidence_report_md.exists():
+                    evidence_download_col2.download_button(
+                        label="下载验证证据报告 Markdown",
+                        data=validation_evidence_report_md.read_bytes(),
+                        file_name=validation_evidence_report_md.name,
+                        mime="text/markdown",
+                        use_container_width=True,
+                        key="download_validation_evidence_report_md",
+                    )
+                    with st.expander("查看验证证据 Markdown"):
+                        st.markdown(_read_text(validation_evidence_report_md))
+
+            if experiment_suggestions_csv is not None and experiment_suggestions_csv.exists():
+                st.subheader("下一轮实验建议")
+                suggestion_df = _load_csv(experiment_suggestions_csv)
+                if suggestion_df is not None:
+                    if ranking_filter_text and "nanobody_id" in suggestion_df.columns:
+                        suggestion_df = suggestion_df[
+                            suggestion_df["nanobody_id"].astype(str).str.contains(
+                                ranking_filter_text,
+                                case=False,
+                                regex=False,
+                                na=False,
+                            )
+                        ]
+                    suggestion_df, suggestion_threshold_summaries = _render_numeric_threshold_filters(
+                        suggestion_df,
+                        key_prefix="experiment_suggestions",
+                        title="实验建议数值阈值筛选",
+                    )
+                    suggestion_view_df, suggestion_export_df = _render_dataframe_view_controls(
+                        suggestion_df,
+                        key_prefix="experiment_suggestions_view",
+                        preferred_columns=[
+                            "nanobody_id",
+                            "suggestion_rank",
+                            "suggestion_tier",
+                            "experiment_priority_score",
+                            "diversity_adjusted_priority_score",
+                            "diversity_group",
+                            "diversity_seen_before",
+                            "diversity_adjustment",
+                            "diversity_note",
+                            "recommended_next_action",
+                            "suggestion_reason",
+                            "consensus_score",
+                            "confidence_score",
+                            "qc_risk_score",
+                            "abs_rank_delta",
+                            "review_reason_flags",
+                            "low_confidence_reasons",
+                        ],
+                        default_sort_column="suggestion_rank",
+                        default_descending=False,
+                    )
+                    if suggestion_threshold_summaries:
+                        st.caption("已启用阈值: " + "；".join(suggestion_threshold_summaries))
+                    st.caption(
+                        f"当前筛选后共 {len(suggestion_export_df)} 条，当前展示前 {min(int(ranking_preview_rows), len(suggestion_view_df))} 条；"
+                        f"可见列 {len(suggestion_view_df.columns)} 个。"
+                    )
+                    st.dataframe(suggestion_view_df.head(int(ranking_preview_rows)), use_container_width=True)
+                    suggestion_download_col1, suggestion_download_col2 = st.columns(2)
+                    suggestion_download_col1.download_button(
+                        label="下载当前实验建议可见视图 CSV",
+                        data=suggestion_view_df.to_csv(index=False).encode("utf-8"),
+                        file_name="experiment_suggestions_filtered.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_experiment_suggestions_csv",
+                    )
+                    suggestion_download_col2.download_button(
+                        label="下载当前实验建议全筛选结果 CSV",
+                        data=suggestion_export_df.to_csv(index=False).encode("utf-8"),
+                        file_name="experiment_suggestions_filtered_full.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_full_experiment_suggestions_csv",
+                    )
+
+            if parameter_sensitivity_candidate_csv is not None and parameter_sensitivity_candidate_csv.exists():
+                st.subheader("参数敏感性分析")
+                st.caption("该表不重新训练模型，只检查共识排名在不同 Rule/ML 权重、rank-agreement 权重和 QC 惩罚强度下是否稳定。")
+                sensitivity_df = _load_csv(parameter_sensitivity_candidate_csv)
+                if sensitivity_df is not None:
+                    if ranking_filter_text and "nanobody_id" in sensitivity_df.columns:
+                        sensitivity_df = sensitivity_df[
+                            sensitivity_df["nanobody_id"].astype(str).str.contains(
+                                ranking_filter_text,
+                                case=False,
+                                regex=False,
+                                na=False,
+                            )
+                        ]
+                    sensitivity_view_df, sensitivity_export_df = _render_dataframe_view_controls(
+                        sensitivity_df,
+                        key_prefix="parameter_sensitivity_view",
+                        preferred_columns=[
+                            "nanobody_id",
+                            "baseline_rank",
+                            "best_rank",
+                            "worst_rank",
+                            "rank_span",
+                            "top_n_frequency",
+                            "top_n_unstable",
+                            "is_sensitive",
+                            "sensitivity_reason",
+                            "decision_tier",
+                            "confidence_level",
+                        ],
+                        default_sort_column="rank_span",
+                        default_descending=True,
+                    )
+                    st.dataframe(sensitivity_view_df.head(int(ranking_preview_rows)), use_container_width=True)
+                    sens_col1, sens_col2 = st.columns(2)
+                    sens_col1.download_button(
+                        label="下载参数敏感性可见视图 CSV",
+                        data=sensitivity_view_df.to_csv(index=False).encode("utf-8"),
+                        file_name="parameter_sensitivity_filtered.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_parameter_sensitivity_view_csv",
+                    )
+                    sens_col2.download_button(
+                        label="下载参数敏感性全表 CSV",
+                        data=sensitivity_export_df.to_csv(index=False).encode("utf-8"),
+                        file_name="parameter_sensitivity_filtered_full.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_parameter_sensitivity_full_csv",
+                    )
+                if parameter_sensitivity_report_md is not None and parameter_sensitivity_report_md.exists():
+                    with st.expander("查看参数敏感性报告"):
+                        st.markdown(_read_text(parameter_sensitivity_report_md))
+
+            if consensus_ranking_csv is not None and consensus_ranking_csv.exists():
+                st.subheader("Rule + ML 共识排名")
+                consensus_df = _load_csv(consensus_ranking_csv)
+                if consensus_df is not None:
+                    if ranking_filter_text and "nanobody_id" in consensus_df.columns:
+                        consensus_df = consensus_df[
+                            consensus_df["nanobody_id"].astype(str).str.contains(
+                                ranking_filter_text,
+                                case=False,
+                                regex=False,
+                                na=False,
+                            )
+                        ]
+                    consensus_df, consensus_threshold_summaries = _render_numeric_threshold_filters(
+                        consensus_df,
+                        key_prefix="consensus_ranking",
+                        title="共识排名数值阈值筛选",
+                    )
+                    consensus_view_df, consensus_export_df = _render_dataframe_view_controls(
+                        consensus_df,
+                        key_prefix="consensus_ranking_view",
+                        preferred_columns=[
+                            "nanobody_id",
+                            "consensus_rank",
+                            "consensus_score",
+                            "confidence_level",
+                            "confidence_score",
+                            "decision_tier",
+                            "ml_score",
+                            "rule_score",
+                            "rank_agreement_score",
+                            "qc_risk_score",
+                            "review_reason_flags",
+                            "low_confidence_reasons",
+                            "risk_flags",
+                            "consensus_explanation",
+                        ],
+                        default_sort_column="consensus_score",
+                        default_descending=True,
+                    )
+                    if consensus_threshold_summaries:
+                        st.caption("已启用阈值: " + "；".join(consensus_threshold_summaries))
+                    st.caption(
+                        f"当前筛选后共 {len(consensus_export_df)} 条，当前展示前 {min(int(ranking_preview_rows), len(consensus_view_df))} 条；"
+                        f"可见列 {len(consensus_view_df.columns)} 个。"
+                    )
+                    st.dataframe(consensus_view_df.head(int(ranking_preview_rows)), use_container_width=True)
+                    consensus_download_col1, consensus_download_col2 = st.columns(2)
+                    consensus_download_col1.download_button(
+                        label="下载当前共识可见视图 CSV",
+                        data=consensus_view_df.to_csv(index=False).encode("utf-8"),
+                        file_name="consensus_ranking_filtered.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_consensus_ranking_csv",
+                    )
+                    consensus_download_col2.download_button(
+                        label="下载当前共识全筛选结果 CSV",
+                        data=consensus_export_df.to_csv(index=False).encode("utf-8"),
+                        file_name="consensus_ranking_filtered_full.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_filtered_full_consensus_ranking_csv",
+                    )
 
             if ml_ranking_csv is not None and ml_ranking_csv.exists():
                 st.subheader("ML 排名")
@@ -6343,6 +10928,49 @@ def main() -> None:
             else:
                 st.info("当前没有 execution report。")
 
+    with tab_ai:
+        if not isinstance(summary, dict):
+            st.info("先运行一次 pipeline，再查看 AI 解释。")
+        else:
+            artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+            ai_summary_path = Path(str(artifacts.get("ai_run_summary_md"))) if artifacts.get("ai_run_summary_md") else None
+            ai_candidate_path = (
+                Path(str(artifacts.get("ai_top_candidates_explanation_md")))
+                if artifacts.get("ai_top_candidates_explanation_md")
+                else None
+            )
+            ai_diag_path = (
+                Path(str(artifacts.get("ai_failure_diagnosis_md")))
+                if artifacts.get("ai_failure_diagnosis_md")
+                else None
+            )
+            ai_meta_path = (
+                Path(str(artifacts.get("ai_assistant_summary_json")))
+                if artifacts.get("ai_assistant_summary_json")
+                else None
+            )
+            if ai_summary_path is None or not ai_summary_path.exists():
+                st.info("当前运行未启用 AI 解释。可在左侧“AI 解释（可选）”打开后重新运行。")
+            else:
+                ai_meta = _load_json(ai_meta_path) if ai_meta_path is not None else None
+                if isinstance(ai_meta, dict):
+                    st.caption(
+                        f"Provider: {ai_meta.get('provider_requested', 'N/A')}；"
+                        f"Model: {ai_meta.get('model', 'N/A')}；"
+                        f"生成时间: {ai_meta.get('created_at', 'N/A')}"
+                    )
+                    errors = ai_meta.get("errors") if isinstance(ai_meta.get("errors"), dict) else {}
+                    if errors:
+                        st.warning("在线 AI provider 不可用时已自动回退为本地离线摘要。")
+                st.subheader("运行摘要")
+                st.markdown(_read_text(ai_summary_path))
+                if ai_candidate_path is not None and ai_candidate_path.exists():
+                    with st.expander("Top candidates 解释", expanded=False):
+                        st.markdown(_read_text(ai_candidate_path))
+                if ai_diag_path is not None and ai_diag_path.exists():
+                    with st.expander("失败诊断 / 产物检查", expanded=False):
+                        st.markdown(_read_text(ai_diag_path))
+
     with tab_logs:
         stdout_text = str(st.session_state.get("last_stdout") or "")
         stderr_text = str(st.session_state.get("last_stderr") or "")
@@ -6357,6 +10985,8 @@ def main() -> None:
 
     with tab_diag:
         _render_diagnostics_panel(diagnostics, last_error, metadata)
+        st.divider()
+        _render_cd38_public_starter_panel()
 
 
 if __name__ == "__main__":
