@@ -35,6 +35,10 @@ from runtime_dependency_utils import (
 )
 
 
+DEFAULT_ANTIGEN_CHAIN = "B"
+DEFAULT_NANOBODY_CHAIN = "A"
+
+
 def _to_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
@@ -72,8 +76,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--default_pocket_file", default=None)
     parser.add_argument("--default_catalytic_file", default=None)
     parser.add_argument("--default_ligand_file", default=None)
-    parser.add_argument("--default_antigen_chain", default=None)
-    parser.add_argument("--default_nanobody_chain", default=None)
+    parser.add_argument("--default_antigen_chain", default=DEFAULT_ANTIGEN_CHAIN)
+    parser.add_argument("--default_nanobody_chain", default=DEFAULT_NANOBODY_CHAIN)
     parser.add_argument("--skip_failed_rows", action="store_true")
 
     # shared ranking/train options
@@ -250,8 +254,8 @@ def run_recommended_pipeline(
     default_pocket_file: str | Path | None = None,
     default_catalytic_file: str | Path | None = None,
     default_ligand_file: str | Path | None = None,
-    default_antigen_chain: str | None = None,
-    default_nanobody_chain: str | None = None,
+    default_antigen_chain: str | None = DEFAULT_ANTIGEN_CHAIN,
+    default_nanobody_chain: str | None = DEFAULT_NANOBODY_CHAIN,
     skip_failed_rows: bool = False,
     top_k: int = 3,
     top_k_selection_col: str = "auto",

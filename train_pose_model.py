@@ -28,6 +28,24 @@ TEXT_STATUS_COLUMNS = [
     "split_mode",
     "geometry_debug_summary",
 ]
+LABEL_OR_TRUTH_COLUMNS = {
+    "label",
+    "validation_label",
+    "input_validation_label",
+    "experiment_label",
+    "experiment_result",
+    "true_label",
+    "true_rank",
+    "true_score",
+    "ground_truth",
+    "one_time_true_rank",
+    "one_time_true_score",
+    "one_time_validation_label_top3",
+    "one_time_vhh_order_label",
+    "vhh_index",
+    "nanobody_index",
+    "candidate_index",
+}
 
 
 def build_feature_direction_map() -> dict[str, tuple[int, float]]:
@@ -267,7 +285,7 @@ def select_feature_columns(
         *ID_COLUMNS,
         *PATH_COLUMNS,
         *TEXT_STATUS_COLUMNS,
-        "label",
+        *LABEL_OR_TRUTH_COLUMNS,
         "pseudo_label",
         "pseudo_score",
         "pseudo_rank",
@@ -280,9 +298,11 @@ def select_feature_columns(
     feature_cols: list[str] = []
     n_rows = max(1, len(df))
     min_count = max(1, int(np.ceil(min_non_nan_ratio * n_rows)))
+    excluded_normalized = {str(col).strip().lower() for col in excluded}
 
     for col in df.columns:
-        if col in excluded:
+        col_normalized = str(col).strip().lower()
+        if col in excluded or col_normalized in excluded_normalized:
             continue
 
         s = _to_numeric_series(df[col])
@@ -1282,12 +1302,37 @@ def main() -> None:
         "delta_pocket_occupancy_proxy",
         "pocket_block_volume_proxy",
         "min_distance_to_pocket",
+        "catalytic_anchor_core_residue_count",
+        "catalytic_anchor_primary_shell_residue_count",
+        "catalytic_anchor_primary_shell_fraction_of_antigen",
+        "catalytic_anchor_primary_shell_hit_fraction",
+        "catalytic_anchor_min_distance_to_primary_shell",
+        "catalytic_anchor_manual_overlap_fraction_of_shell",
+        "catalytic_anchor_shell_overwide_proxy",
+        "catalytic_anchor_shell_overwide_flag",
+        "catalytic_anchor_shell_4A_hit_fraction",
+        "catalytic_anchor_shell_6A_hit_fraction",
+        "catalytic_anchor_shell_8A_hit_fraction",
         "rsite_accuracy",
         "MMPBSA_energy",
+        "mmpbsa_normalized",
         "mmpbsa_energy",
         "MMGBSA_energy",
         "mmgbsa_energy",
         "mmgbsa",
+        "score_txt",
+        "interface_dG_cross",
+        "interface_dG_cross/dSASAx100",
+        "interface_dG_separated",
+        "interface_dG_separated/dSASAx100",
+        "interface_dSASA_polar",
+        "interface_dSASA_int",
+        "interface_hbonds_int",
+        "interface_packstat",
+        "decomp_antigen_total_sum",
+        "decomp_nanobody_total_sum",
+        "decomp_pocket_total_sum",
+        "decomp_pocket_total_mean",
     ]
     for col in passthrough_optional_cols:
         if col in df_for_train.columns and col not in pred_df.columns:

@@ -139,6 +139,9 @@ python -m streamlit run local_ml_app.py
 - 运行结果写到 `local_app_runs\` 或便携版中的 `app\local_app_runs\`
 - 运行完成后，可以在页面里预览共识排名、候选报告卡和下一轮实验建议，并下载对应结果文件
 - 如果要看 CD38 公开结构 benchmark 状态，打开页面里的“诊断”页，点击“刷新 CD38 public starter”，然后查看 action plan 和 expected returns 清单
+- 如果你的项目有酶的关键催化/功能残基文件，在左侧“可选默认文件”上传或填写 `default_catalytic_file`；主程序会自动生成 catalytic-anchor 4A/6A/8A 3D shell pocket 诊断列，用于复核口袋位置
+- 如果要精修 pocket 输入，打开“诊断”页的“Pocket 证据整合”。这里可以运行单 PDB evidence builder，也可以选择标准 `result/` 父目录批量构建项目级 pocket evidence；输出的 `candidate_curated_pocket.txt` 可以一键回填为下一轮 `default_pocket_file`
+- Pocket 证据整合默认带安全检查：P2Rank/fpocket 过宽 residue 会进入 `external-overwide-guard` 分组；AI prior 只作为待复核线索，必须通过 `ai_prior_audit.csv` 保留来源句子、证据等级和人工复核状态
 - 如果要把 CD38 外部工具输入包拿到另一台机器或 WSL 跑，仍在“诊断”页点击“生成 transfer zip”；zip 里会带 `cd38_external_tool_next_run.md` 和 `run_cd38_external_next_benchmark.*`，外部机器上优先运行这个 next-run 脚本，只跑当前缺的 benchmark blocker；跑完拿回 zip/目录后，先点“Dry-run 检查返回包”，再点“导入返回包并 finalize”
 - 如果只是想确认返回包导入器本身能识别正确目录形状，在“诊断”页展开“返回包导入流程自测”；它只做路径/coverage 自测，不代表真实 P2Rank/fpocket 结果
 - 返回包 dry-run 后先看“返回包安全门控”：只有 `PASS_*` 状态才适合继续导入；`FAIL_INPUT_PACKAGE` 表示拿回来的是原始输入包，`FAIL_SYNTHETIC_FIXTURE` 表示自测包不能当 benchmark 证据；本地软件和命令行 finalize 正式导入前都会自动 gate 拦截非 `PASS_*` 返回包。自动化脚本可加 `--strict_import_gate` 让 gate 失败时命令返回非零
@@ -226,15 +229,40 @@ A\result\vhh1\CD38_1\1\1.pdb
 A\result\vhh1\CD38_1\1\FINAL_RESULTS_MMPBSA.dat
 ```
 
-可以直接在本地软件左侧“导入目录/zip”选择父目录 `A\`。软件会先找 `pose_features.csv`，没有时找 `input_pose_table.csv`，两者都没有时自动识别 `A\result\`，生成 `auto_input_pose_table.csv`，并把 `FINAL_RESULTS_MMPBSA.dat` 解析为 `MMPBSA_energy`。
+可以直接在本地软件左侧“导入目录/zip”选择父目录 `A\`。软件会先找 `pose_features.csv`，没有时找 `input_pose_table.csv`，两者都没有时自动识别 `A\result\` 或 `A\rsite\result\`，生成 `auto_input_pose_table.csv`，并把 `FINAL_RESULTS_MMPBSA.dat` 解析为 `MMPBSA_energy`。
 
-也可以先用命令生成输入表：
+如果你只想一键提取正式 `pose_features.csv`，在 `result` 的父目录执行：
+
+```powershell
+python build_pose_features_from_result_tree.py
+```
+
+该命令默认输出到当前目录：
+
+```text
+pose_features.csv
+input_pose_table.csv
+feature_qc.json
+input_pose_table.report.md
+```
+
+如果当前目录下有 `rsite\rsite.txt`，程序会自动按 `antigen_chain=B` 派生 `.ml_auto\auto_pocket_antigen_B.txt`，并把 `*_interface.sc`、`FINAL_DECOMP_MMPBSA.dat`、`MMPBSA_normalized.txt`、`score.txt`、`*_accuracy.txt` 等 sidecar 文件解析进 `pose_features.csv`。
+
+也可以只生成输入表：
 
 ```powershell
 python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv
 ```
 
 后续 `top_k` 的含义固定为：每个 `vhh/CD38_i/` 下面按 `MMPBSA_energy` 选最低的 K 个 pose；没有能量列时才回退到 Rule/ML 分数。
+
+如果你想在正式跑 ML 前先生成项目级精修 pocket，在同一个父目录下执行：
+
+```powershell
+python build_project_pocket_evidence.py --project_root . --target_prefix CD38
+```
+
+它会输出 `input_pose_table_with_pocket_evidence.csv`，并把 `candidate_curated_pocket.txt` 写入每一行的 `pocket_file`。如果使用本地软件，则在“诊断 -> Pocket 证据整合 -> 批量 result 父目录模式”点击“从 result 父目录批量构建 pocket evidence”即可。
 
 ---
 

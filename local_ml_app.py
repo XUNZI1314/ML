@@ -37,7 +37,12 @@ from input_path_repair import (
     apply_input_path_repair_plan,
 )
 from real_data_starter_utils import write_real_data_starter_kit
-from result_tree_io import build_input_table_from_result_tree, find_result_tree_root
+from result_tree_io import (
+    DEFAULT_ANTIGEN_CHAIN,
+    DEFAULT_NANOBODY_CHAIN,
+    build_input_table_from_result_tree,
+    find_result_tree_root,
+)
 from run_cd38_public_starter import run_cd38_public_starter
 from runtime_dependency_utils import (
     check_runtime_dependencies,
@@ -51,6 +56,7 @@ COMPARE_EXPORT_ROOT = LOCAL_APP_RUN_ROOT / "compare_exports"
 PARAM_TEMPLATE_ROOT = LOCAL_APP_RUN_ROOT / "parameter_templates"
 GENERATED_INPUT_ROOT = LOCAL_APP_RUN_ROOT / "_generated_inputs"
 DEMO_INPUT_ROOT = LOCAL_APP_RUN_ROOT / "_demo_inputs"
+POCKET_EVIDENCE_ROOT = LOCAL_APP_RUN_ROOT / "pocket_evidence"
 CD38_BENCHMARK_ROOT = REPO_ROOT / "benchmarks" / "cd38"
 CD38_EXTERNAL_INPUT_ROOT = CD38_BENCHMARK_ROOT / "external_tool_inputs"
 CD38_TRANSFER_ROOT = CD38_BENCHMARK_ROOT / "external_tool_transfer"
@@ -75,6 +81,7 @@ COMPARE_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
 PARAM_TEMPLATE_ROOT.mkdir(parents=True, exist_ok=True)
 GENERATED_INPUT_ROOT.mkdir(parents=True, exist_ok=True)
 DEMO_INPUT_ROOT.mkdir(parents=True, exist_ok=True)
+POCKET_EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
 
 PDF_PAGE_WIDTH = 1240
 PDF_PAGE_HEIGHT = 1754
@@ -142,8 +149,13 @@ FEATURE_CSV_OPTIONAL_HINT_COLUMNS = [
 BUNDLE_DETECTION_RULES: list[tuple[str, list[str], str | None, set[str] | None]] = [
     ("input_csv_local_path", ["input_pose_table.csv"], "input", {".csv"}),
     ("feature_csv_local_path", ["pose_features.csv"], "feature", {".csv"}),
-    ("default_pocket_local_path", [], "pocket", None),
-    ("default_catalytic_local_path", [], "catalytic", None),
+    ("default_pocket_local_path", ["rsite.txt", "cd38_pocket_from_rsite_chain_B.txt", "pocket.txt", "pocket_residues.txt"], "pocket", None),
+    (
+        "default_catalytic_local_path",
+        ["catalytic.txt", "catalytic_residues.txt", "active_site.txt", "active_site_residues.txt", "function_residues.txt"],
+        "catalytic",
+        None,
+    ),
     ("default_ligand_local_path", [], "ligand", None),
     ("experiment_plan_override_local_path", ["experiment_plan_override.csv", "experiment_plan_overrides.csv"], "experiment", {".csv"}),
 ]
@@ -180,8 +192,8 @@ FORM_DEFAULTS: dict[str, Any] = {
     "default_catalytic_local_path": "",
     "default_ligand_local_path": "",
     "experiment_plan_override_local_path": "",
-    "default_antigen_chain": "",
-    "default_nanobody_chain": "",
+    "default_antigen_chain": DEFAULT_ANTIGEN_CHAIN,
+    "default_nanobody_chain": DEFAULT_NANOBODY_CHAIN,
     "label_col": "label",
     "top_k": 3,
     "pocket_overwide_penalty_weight": 0.0,
@@ -252,8 +264,8 @@ def _build_sample_input_csv_text() -> str:
                 "conformer_id": "conf_01",
                 "pose_id": "pose_001",
                 "pdb_path": r"data\complex_001.pdb",
-                "antigen_chain": "A",
-                "nanobody_chain": "H",
+                "antigen_chain": DEFAULT_ANTIGEN_CHAIN,
+                "nanobody_chain": DEFAULT_NANOBODY_CHAIN,
                 "pocket_file": r"data\pocket_residues.txt",
                 "catalytic_file": r"data\catalytic_residues.txt",
                 "ligand_file": r"data\ligand_template.pdb",
@@ -2283,6 +2295,8 @@ def _build_auto_input_table(
             default_pocket_file=default_pocket or None,
             default_catalytic_file=default_catalytic or None,
             default_ligand_file=default_ligand or None,
+            default_antigen_chain=DEFAULT_ANTIGEN_CHAIN,
+            default_nanobody_chain=DEFAULT_NANOBODY_CHAIN,
             out_csv_path=out_csv,
             path_mode="absolute",
             allow_single_pdb_fallback=False,
@@ -2324,13 +2338,28 @@ def _build_auto_input_table(
         row = {
             **ids,
             "pdb_path": str(pdb_path.resolve()),
+            "antigen_chain": DEFAULT_ANTIGEN_CHAIN,
+            "nanobody_chain": DEFAULT_NANOBODY_CHAIN,
             "pocket_file": str(Path(default_pocket).resolve()) if default_pocket else "",
             "catalytic_file": str(Path(default_catalytic).resolve()) if default_catalytic else "",
             "ligand_file": str(Path(default_ligand).resolve()) if default_ligand else "",
         }
         rows.append(row)
 
-    df = pd.DataFrame(rows, columns=["nanobody_id", "conformer_id", "pose_id", "pdb_path", "pocket_file", "catalytic_file", "ligand_file"])
+    df = pd.DataFrame(
+        rows,
+        columns=[
+            "nanobody_id",
+            "conformer_id",
+            "pose_id",
+            "pdb_path",
+            "antigen_chain",
+            "nanobody_chain",
+            "pocket_file",
+            "catalytic_file",
+            "ligand_file",
+        ],
+    )
     df.to_csv(out_csv, index=False)
     return {
         "generated_csv_path": str(out_csv.resolve()),
@@ -7811,6 +7840,831 @@ def _normalize_local_path_text(value: str) -> Path | None:
     return path if path.is_absolute() else REPO_ROOT / path
 
 
+def _infer_first_pdb_from_table(csv_path_text: str) -> Path | None:
+    csv_path = _normalize_local_path_text(csv_path_text)
+    if csv_path is None or not csv_path.exists() or not csv_path.is_file():
+        return None
+    try:
+        df = _read_local_csv(csv_path)
+    except Exception:
+        return None
+    if "pdb_path" not in df.columns:
+        return None
+
+    for raw_value in df["pdb_path"].dropna().astype(str).tolist():
+        text = raw_value.strip().strip('"').strip("'")
+        if not text:
+            continue
+        candidate = Path(text).expanduser()
+        if not candidate.is_absolute():
+            candidate = csv_path.parent / candidate
+        if candidate.exists() and candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _prefill_pocket_evidence_inputs_from_current_form() -> None:
+    if not str(st.session_state.get("pocket_evidence_manual_file_path") or "").strip():
+        default_pocket = str(st.session_state.get("default_pocket_local_path") or "").strip()
+        if default_pocket:
+            st.session_state["pocket_evidence_manual_file_path"] = default_pocket
+
+    if not str(st.session_state.get("pocket_evidence_catalytic_file_path") or "").strip():
+        default_catalytic = str(st.session_state.get("default_catalytic_local_path") or "").strip()
+        if default_catalytic:
+            st.session_state["pocket_evidence_catalytic_file_path"] = default_catalytic
+
+    if not str(st.session_state.get("pocket_evidence_ligand_file_path") or "").strip():
+        default_ligand = str(st.session_state.get("default_ligand_local_path") or "").strip()
+        if default_ligand:
+            st.session_state["pocket_evidence_ligand_file_path"] = default_ligand
+
+    if not str(st.session_state.get("pocket_evidence_antigen_chain") or "").strip():
+        st.session_state["pocket_evidence_antigen_chain"] = str(
+            st.session_state.get("default_antigen_chain") or DEFAULT_ANTIGEN_CHAIN
+        )
+
+    if not str(st.session_state.get("pocket_evidence_pdb_path") or "").strip():
+        inferred = (
+            _infer_first_pdb_from_table(str(st.session_state.get("input_csv_local_path") or ""))
+            or _infer_first_pdb_from_table(str(st.session_state.get("feature_csv_local_path") or ""))
+        )
+        if inferred is not None:
+            st.session_state["pocket_evidence_pdb_path"] = str(inferred)
+
+    if not str(st.session_state.get("pocket_evidence_project_root_path") or "").strip():
+        bundle_dir = str(st.session_state.get("bundle_dir_local_path") or "").strip()
+        if bundle_dir:
+            st.session_state["pocket_evidence_project_root_path"] = bundle_dir
+        else:
+            input_csv = _normalize_local_path_text(str(st.session_state.get("input_csv_local_path") or ""))
+            if input_csv is not None and input_csv.exists():
+                st.session_state["pocket_evidence_project_root_path"] = str(input_csv.parent)
+
+
+def _append_optional_path_arg(command: list[str], *, flag: str, state_key: str, label: str) -> tuple[bool, str]:
+    path_text = str(st.session_state.get(state_key) or "").strip()
+    if not path_text:
+        return True, ""
+    path = _normalize_local_path_text(path_text)
+    if path is None or not path.exists():
+        return False, f"{label} 路径不存在: {path_text}"
+    command.extend([flag, str(path.resolve())])
+    return True, ""
+
+
+def _run_pocket_evidence_builder_from_ui() -> None:
+    pdb_path = _normalize_local_path_text(str(st.session_state.get("pocket_evidence_pdb_path") or ""))
+    if pdb_path is None or not pdb_path.exists() or not pdb_path.is_file():
+        st.session_state["last_pocket_evidence_message"] = f"PDB 路径不存在: {pdb_path or ''}"
+        st.session_state["last_pocket_evidence_stdout"] = ""
+        st.session_state["last_pocket_evidence_stderr"] = ""
+        st.session_state["last_pocket_evidence_summary"] = None
+        return
+
+    out_dir_text = str(st.session_state.get("pocket_evidence_out_dir_path") or "").strip()
+    if out_dir_text:
+        out_dir = _normalize_local_path_text(out_dir_text)
+        assert out_dir is not None
+    else:
+        safe_run_name = _slugify_name(str(st.session_state.get("pocket_evidence_run_name") or "pocket_evidence"))
+        out_dir = POCKET_EVIDENCE_ROOT / f"{safe_run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    antigen_chain = str(st.session_state.get("pocket_evidence_antigen_chain") or DEFAULT_ANTIGEN_CHAIN).strip()
+    try:
+        ligand_contact_threshold = float(st.session_state.get("pocket_evidence_ligand_contact_threshold") or 4.5)
+        curated_min_support = float(st.session_state.get("pocket_evidence_curated_min_support") or 1.2)
+        p2rank_top_n = int(st.session_state.get("pocket_evidence_p2rank_top_n") or 1)
+    except (TypeError, ValueError) as exc:
+        st.session_state["last_pocket_evidence_message"] = f"Pocket evidence 参数格式错误: {exc}"
+        st.session_state["last_pocket_evidence_stdout"] = ""
+        st.session_state["last_pocket_evidence_stderr"] = ""
+        st.session_state["last_pocket_evidence_summary"] = None
+        return
+
+    command = [
+        sys.executable,
+        "build_pocket_evidence.py",
+        "--pdb_path",
+        str(pdb_path.resolve()),
+        "--out_dir",
+        str(out_dir.resolve()),
+        "--antigen_chain",
+        antigen_chain or DEFAULT_ANTIGEN_CHAIN,
+        "--anchor_shell_radii",
+        str(st.session_state.get("pocket_evidence_anchor_shell_radii") or "4,6,8"),
+        "--ligand_contact_threshold",
+        str(ligand_contact_threshold),
+        "--curated_min_support",
+        str(curated_min_support),
+        "--external_overwide_max_residue_count",
+        str(int(st.session_state.get("pocket_evidence_external_overwide_max_residue_count") or 35)),
+        "--external_overwide_max_fraction",
+        str(float(st.session_state.get("pocket_evidence_external_overwide_max_fraction") or 0.18)),
+        "--p2rank_top_n",
+        str(p2rank_top_n),
+    ]
+    if bool(st.session_state.get("pocket_evidence_disable_external_precision_guard", False)):
+        command.append("--disable_external_precision_guard")
+
+    optional_args = [
+        ("--manual_pocket_file", "pocket_evidence_manual_file_path", "manual/rsite pocket"),
+        ("--literature_file", "pocket_evidence_literature_file_path", "literature residue"),
+        ("--catalytic_file", "pocket_evidence_catalytic_file_path", "catalytic residue"),
+        ("--literature_source_table", "pocket_evidence_literature_source_table_path", "literature source audit table"),
+        ("--catalytic_source_table", "pocket_evidence_catalytic_source_table_path", "catalytic source audit table"),
+        ("--ai_pocket_file", "pocket_evidence_ai_file_path", "AI prior residue"),
+        ("--ai_source_table", "pocket_evidence_ai_source_table_path", "AI prior source audit table"),
+        ("--p2rank_file", "pocket_evidence_p2rank_file_path", "P2Rank output"),
+        ("--fpocket_file", "pocket_evidence_fpocket_file_path", "fpocket output"),
+        ("--ligand_file", "pocket_evidence_ligand_file_path", "ligand/template PDB"),
+    ]
+    for flag, state_key, label in optional_args:
+        ok, message = _append_optional_path_arg(command, flag=flag, state_key=state_key, label=label)
+        if not ok:
+            st.session_state["last_pocket_evidence_message"] = message
+            st.session_state["last_pocket_evidence_stdout"] = ""
+            st.session_state["last_pocket_evidence_stderr"] = ""
+            st.session_state["last_pocket_evidence_summary"] = None
+            return
+
+    p2rank_rank = str(st.session_state.get("pocket_evidence_p2rank_rank") or "").strip()
+    if p2rank_rank:
+        try:
+            command.extend(["--p2rank_rank", str(int(p2rank_rank))])
+        except ValueError as exc:
+            st.session_state["last_pocket_evidence_message"] = f"P2Rank rank 必须是整数: {exc}"
+            st.session_state["last_pocket_evidence_stdout"] = ""
+            st.session_state["last_pocket_evidence_stderr"] = ""
+            st.session_state["last_pocket_evidence_summary"] = None
+            return
+    p2rank_name = str(st.session_state.get("pocket_evidence_p2rank_name") or "").strip()
+    if p2rank_name:
+        command.extend(["--p2rank_name", p2rank_name])
+    p2rank_min_probability = str(st.session_state.get("pocket_evidence_p2rank_min_probability") or "").strip()
+    if p2rank_min_probability:
+        try:
+            command.extend(["--p2rank_min_probability", str(float(p2rank_min_probability))])
+        except ValueError as exc:
+            st.session_state["last_pocket_evidence_message"] = f"P2Rank min_probability 必须是数字: {exc}"
+            st.session_state["last_pocket_evidence_stdout"] = ""
+            st.session_state["last_pocket_evidence_stderr"] = ""
+            st.session_state["last_pocket_evidence_summary"] = None
+            return
+
+    returncode, stdout_text, stderr_text = _run_local_cli_command(command)
+    st.session_state["last_pocket_evidence_stdout"] = stdout_text
+    st.session_state["last_pocket_evidence_stderr"] = stderr_text
+    st.session_state["last_pocket_evidence_out_dir"] = str(out_dir.resolve())
+    summary = _load_json(out_dir / "pocket_evidence_summary.json")
+    st.session_state["last_pocket_evidence_summary"] = summary
+    if returncode == 0:
+        st.session_state["last_pocket_evidence_message"] = f"Pocket evidence 已生成: {out_dir.resolve()}"
+    else:
+        st.session_state["last_pocket_evidence_message"] = f"Pocket evidence 生成失败，returncode={returncode}。"
+
+
+def _run_project_pocket_evidence_from_ui() -> None:
+    project_root = _normalize_local_path_text(str(st.session_state.get("pocket_evidence_project_root_path") or ""))
+    if project_root is None or not project_root.exists() or not project_root.is_dir():
+        st.session_state["last_pocket_evidence_message"] = f"项目/result 父目录不存在: {project_root or ''}"
+        st.session_state["last_pocket_evidence_stdout"] = ""
+        st.session_state["last_pocket_evidence_stderr"] = ""
+        st.session_state["last_pocket_evidence_summary"] = None
+        st.session_state["last_project_pocket_evidence_summary"] = None
+        return
+
+    try:
+        ligand_contact_threshold = float(st.session_state.get("pocket_evidence_ligand_contact_threshold") or 4.5)
+        curated_min_support = float(st.session_state.get("pocket_evidence_curated_min_support") or 1.2)
+        p2rank_top_n = int(st.session_state.get("pocket_evidence_p2rank_top_n") or 1)
+    except (TypeError, ValueError) as exc:
+        st.session_state["last_pocket_evidence_message"] = f"项目级 pocket evidence 参数格式错误: {exc}"
+        st.session_state["last_pocket_evidence_stdout"] = ""
+        st.session_state["last_pocket_evidence_stderr"] = ""
+        st.session_state["last_pocket_evidence_summary"] = None
+        st.session_state["last_project_pocket_evidence_summary"] = None
+        return
+
+    safe_run_name = _slugify_name(str(st.session_state.get("pocket_evidence_run_name") or "project_pocket_evidence"))
+    out_dir = POCKET_EVIDENCE_ROOT / f"{safe_run_name}_project_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    input_csv_out = out_dir / "input_pose_table_with_pocket_evidence.csv"
+    command = [
+        sys.executable,
+        "build_project_pocket_evidence.py",
+        "--project_root",
+        str(project_root.resolve()),
+        "--out_dir",
+        str(out_dir.resolve()),
+        "--input_csv_out",
+        str(input_csv_out.resolve()),
+        "--antigen_chain",
+        str(st.session_state.get("pocket_evidence_antigen_chain") or DEFAULT_ANTIGEN_CHAIN),
+        "--nanobody_chain",
+        str(st.session_state.get("default_nanobody_chain") or DEFAULT_NANOBODY_CHAIN),
+        "--target_prefix",
+        str(st.session_state.get("pocket_evidence_project_target_prefix") or ""),
+        "--anchor_shell_radii",
+        str(st.session_state.get("pocket_evidence_anchor_shell_radii") or "4,6,8"),
+        "--ligand_contact_threshold",
+        str(ligand_contact_threshold),
+        "--curated_min_support",
+        str(curated_min_support),
+        "--external_overwide_max_residue_count",
+        str(int(st.session_state.get("pocket_evidence_external_overwide_max_residue_count") or 35)),
+        "--external_overwide_max_fraction",
+        str(float(st.session_state.get("pocket_evidence_external_overwide_max_fraction") or 0.18)),
+        "--p2rank_top_n",
+        str(p2rank_top_n),
+    ]
+    if bool(st.session_state.get("pocket_evidence_allow_single_pdb_fallback", False)):
+        command.append("--allow_single_pdb_fallback")
+    if bool(st.session_state.get("pocket_evidence_disable_external_precision_guard", False)):
+        command.append("--disable_external_precision_guard")
+
+    optional_args = [
+        ("--manual_pocket_file", "pocket_evidence_manual_file_path", "manual/rsite pocket"),
+        ("--literature_file", "pocket_evidence_literature_file_path", "literature residue"),
+        ("--catalytic_file", "pocket_evidence_catalytic_file_path", "catalytic residue"),
+        ("--literature_source_table", "pocket_evidence_literature_source_table_path", "literature source audit table"),
+        ("--catalytic_source_table", "pocket_evidence_catalytic_source_table_path", "catalytic source audit table"),
+        ("--ai_pocket_file", "pocket_evidence_ai_file_path", "AI prior residue"),
+        ("--ai_source_table", "pocket_evidence_ai_source_table_path", "AI prior source audit table"),
+        ("--p2rank_file", "pocket_evidence_p2rank_file_path", "P2Rank output"),
+        ("--fpocket_file", "pocket_evidence_fpocket_file_path", "fpocket output"),
+        ("--ligand_file", "pocket_evidence_ligand_file_path", "ligand/template PDB"),
+    ]
+    for flag, state_key, label in optional_args:
+        ok, message = _append_optional_path_arg(command, flag=flag, state_key=state_key, label=label)
+        if not ok:
+            st.session_state["last_pocket_evidence_message"] = message
+            st.session_state["last_pocket_evidence_stdout"] = ""
+            st.session_state["last_pocket_evidence_stderr"] = ""
+            st.session_state["last_pocket_evidence_summary"] = None
+            st.session_state["last_project_pocket_evidence_summary"] = None
+            return
+
+    p2rank_rank = str(st.session_state.get("pocket_evidence_p2rank_rank") or "").strip()
+    if p2rank_rank:
+        try:
+            command.extend(["--p2rank_rank", str(int(p2rank_rank))])
+        except ValueError as exc:
+            st.session_state["last_pocket_evidence_message"] = f"P2Rank rank 必须是整数: {exc}"
+            st.session_state["last_pocket_evidence_stdout"] = ""
+            st.session_state["last_pocket_evidence_stderr"] = ""
+            st.session_state["last_pocket_evidence_summary"] = None
+            st.session_state["last_project_pocket_evidence_summary"] = None
+            return
+    p2rank_name = str(st.session_state.get("pocket_evidence_p2rank_name") or "").strip()
+    if p2rank_name:
+        command.extend(["--p2rank_name", p2rank_name])
+    p2rank_min_probability = str(st.session_state.get("pocket_evidence_p2rank_min_probability") or "").strip()
+    if p2rank_min_probability:
+        try:
+            command.extend(["--p2rank_min_probability", str(float(p2rank_min_probability))])
+        except ValueError as exc:
+            st.session_state["last_pocket_evidence_message"] = f"P2Rank min_probability 必须是数字: {exc}"
+            st.session_state["last_pocket_evidence_stdout"] = ""
+            st.session_state["last_pocket_evidence_stderr"] = ""
+            st.session_state["last_pocket_evidence_summary"] = None
+            st.session_state["last_project_pocket_evidence_summary"] = None
+            return
+
+    returncode, stdout_text, stderr_text = _run_local_cli_command(command)
+    project_summary = _load_json(out_dir / "project_pocket_evidence_summary.json")
+    evidence_summary = _load_json(out_dir / "pocket_evidence_summary.json")
+    st.session_state["last_pocket_evidence_stdout"] = stdout_text
+    st.session_state["last_pocket_evidence_stderr"] = stderr_text
+    st.session_state["last_pocket_evidence_out_dir"] = str(out_dir.resolve())
+    st.session_state["last_pocket_evidence_summary"] = evidence_summary
+    st.session_state["last_project_pocket_evidence_summary"] = project_summary
+
+    if returncode == 0 and isinstance(project_summary, dict):
+        generated = project_summary.get("generated_input_table") if isinstance(project_summary.get("generated_input_table"), dict) else {}
+        candidate = project_summary.get("candidate_pocket") if isinstance(project_summary.get("candidate_pocket"), dict) else {}
+        input_csv_path = str(generated.get("path") or "")
+        candidate_path = str(candidate.get("path") or "")
+        if input_csv_path:
+            st.session_state["start_mode"] = "input_csv"
+            st.session_state["input_csv_local_path"] = input_csv_path
+        if candidate_path and Path(candidate_path).exists():
+            st.session_state["default_pocket_local_path"] = candidate_path
+        st.session_state["last_pocket_evidence_message"] = (
+            "项目级 pocket evidence 已生成；已把生成的 input CSV 回填为下一轮输入。"
+        )
+    else:
+        st.session_state["last_pocket_evidence_message"] = f"项目级 pocket evidence 生成失败，returncode={returncode}。"
+
+
+def _series_to_bool(series: pd.Series) -> pd.Series:
+    text = series.astype(str).str.strip().str.lower()
+    return text.isin({"true", "1", "yes", "y", "t"})
+
+
+def _pocket_evidence_reason_mask(df: pd.DataFrame, token: str) -> pd.Series:
+    if "review_reason" not in df.columns:
+        return pd.Series(False, index=df.index)
+    return df["review_reason"].astype(str).str.contains(token, case=False, na=False)
+
+
+def _pocket_evidence_evidence_type_mask(df: pd.DataFrame, token: str) -> pd.Series:
+    if "evidence_types" not in df.columns:
+        return pd.Series(False, index=df.index)
+    return df["evidence_types"].astype(str).str.contains(token, case=False, na=False)
+
+
+def _build_pocket_evidence_preview_frame(support_df: pd.DataFrame) -> pd.DataFrame:
+    preview_df = support_df.copy()
+    if preview_df.empty:
+        return preview_df
+
+    needs_review = (
+        _series_to_bool(preview_df["needs_review"])
+        if "needs_review" in preview_df.columns
+        else pd.Series(False, index=preview_df.index)
+    )
+    curated = (
+        _series_to_bool(preview_df["is_curated_candidate"])
+        if "is_curated_candidate" in preview_df.columns
+        else pd.Series(False, index=preview_df.index)
+    )
+    present = (
+        _series_to_bool(preview_df["present_in_structure"])
+        if "present_in_structure" in preview_df.columns
+        else pd.Series(True, index=preview_df.index)
+    )
+    method_count = (
+        pd.to_numeric(preview_df["method_count"], errors="coerce").fillna(0)
+        if "method_count" in preview_df.columns
+        else pd.Series(0, index=preview_df.index)
+    )
+    high_conf_count = (
+        pd.to_numeric(preview_df["high_confidence_source_count"], errors="coerce").fillna(0)
+        if "high_confidence_source_count" in preview_df.columns
+        else pd.Series(0, index=preview_df.index)
+    )
+    support_score = (
+        pd.to_numeric(preview_df["weighted_support_score"], errors="coerce").fillna(0)
+        if "weighted_support_score" in preview_df.columns
+        else pd.Series(0.0, index=preview_df.index)
+    )
+
+    not_found = _pocket_evidence_reason_mask(preview_df, "not_found_in_structure") | ~present
+    ai_only = _pocket_evidence_reason_mask(preview_df, "ai_prior_only") | _pocket_evidence_reason_mask(
+        preview_df,
+        "ai_prior_requires_review",
+    )
+    if "evidence_types" in preview_df.columns:
+        evidence_text = preview_df["evidence_types"].astype(str).str.strip().str.lower()
+        ai_only = ai_only | evidence_text.eq("ai_prior")
+    anchor_shell_only = _pocket_evidence_reason_mask(preview_df, "anchor_shell_only")
+    external_overwide_guard = _pocket_evidence_reason_mask(preview_df, "external_overwide_guard")
+    single_method = (
+        _pocket_evidence_reason_mask(preview_df, "single_low_or_medium_confidence_method")
+        | ((method_count <= 1) & (high_conf_count <= 0) & needs_review)
+    )
+
+    preview_df["ui_is_high_confidence"] = high_conf_count > 0
+    preview_df["ui_is_single_method"] = single_method
+    preview_df["ui_is_anchor_shell_only"] = anchor_shell_only
+    preview_df["ui_is_ai_prior_only"] = ai_only
+    preview_df["ui_is_not_found_in_structure"] = not_found
+    preview_df["ui_is_external_overwide_guard"] = external_overwide_guard
+
+    risk_level: list[str] = []
+    review_group: list[str] = []
+    action_hint: list[str] = []
+    risk_rank: list[int] = []
+
+    for idx in preview_df.index:
+        row_not_found = bool(not_found.loc[idx])
+        row_ai_only = bool(ai_only.loc[idx])
+        row_anchor_only = bool(anchor_shell_only.loc[idx])
+        row_external_guard = bool(external_overwide_guard.loc[idx])
+        row_single_method = bool(single_method.loc[idx])
+        row_needs_review = bool(needs_review.loc[idx])
+        row_curated = bool(curated.loc[idx])
+        row_high_conf = bool(high_conf_count.loc[idx] > 0)
+
+        if row_not_found:
+            risk_level.append("high")
+            review_group.append("not-found-in-structure")
+            action_hint.append("先检查链 ID、残基编号和 insertion code；不要直接纳入 curated pocket。")
+            risk_rank.append(0)
+        elif row_ai_only:
+            risk_level.append("high")
+            review_group.append("AI-prior-only")
+            action_hint.append("AI prior 只能作为线索；需要文献、人工或工具证据确认后再使用。")
+            risk_rank.append(0)
+        elif row_anchor_only:
+            risk_level.append("high")
+            review_group.append("anchor-shell-only")
+            action_hint.append("只来自 catalytic-anchor shell；优先复核 pocket 边界是否过宽。")
+            risk_rank.append(0)
+        elif row_external_guard:
+            risk_level.append("high")
+            review_group.append("external-overwide-guard")
+            action_hint.append("来自过宽 P2Rank/fpocket 预测的边缘位点；需人工或高置信证据确认后再纳入 pocket。")
+            risk_rank.append(0)
+        elif row_single_method:
+            risk_level.append("medium")
+            review_group.append("single-method")
+            action_hint.append("只有单一低/中置信来源；建议补 P2Rank、fpocket、文献或人工证据。")
+            risk_rank.append(1)
+        elif row_needs_review:
+            risk_level.append("medium")
+            review_group.append("needs-review")
+            action_hint.append("保留在 review 列表中，进入正式 pocket_file 前需要人工确认。")
+            risk_rank.append(1)
+        elif row_curated and row_high_conf:
+            risk_level.append("low")
+            review_group.append("curated-high-confidence")
+            action_hint.append("可作为候选 pocket residue；仍建议结合报告检查整体 pocket 是否过宽。")
+            risk_rank.append(2)
+        elif row_curated:
+            risk_level.append("low")
+            review_group.append("curated-supported")
+            action_hint.append("支持分已达候选阈值；建议和 high-confidence residue 一起复核。")
+            risk_rank.append(2)
+        else:
+            risk_level.append("info")
+            review_group.append("low-support")
+            action_hint.append("支持不足；默认不建议写入下一轮 pocket_file。")
+            risk_rank.append(3)
+
+    preview_df["ui_risk_level"] = risk_level
+    preview_df["ui_review_group"] = review_group
+    preview_df["ui_action_hint"] = action_hint
+    preview_df["_ui_risk_rank"] = risk_rank
+    preview_df["_ui_needs_review_rank"] = (~needs_review).astype(int)
+    preview_df["_ui_support_sort"] = support_score
+    return preview_df.sort_values(
+        by=["_ui_needs_review_rank", "_ui_risk_rank", "_ui_support_sort"],
+        ascending=[True, True, False],
+    ).reset_index(drop=True)
+
+
+def _render_pocket_evidence_support_preview(support_df: pd.DataFrame) -> None:
+    preview_df = _build_pocket_evidence_preview_frame(support_df)
+    if preview_df.empty:
+        st.info("pocket_residue_support.csv 为空。")
+        return
+
+    curated = _series_to_bool(preview_df["is_curated_candidate"]) if "is_curated_candidate" in preview_df.columns else pd.Series(False, index=preview_df.index)
+    needs_review = _series_to_bool(preview_df["needs_review"]) if "needs_review" in preview_df.columns else pd.Series(False, index=preview_df.index)
+    high_conf = preview_df["ui_is_high_confidence"] if "ui_is_high_confidence" in preview_df.columns else pd.Series(False, index=preview_df.index)
+    single_method = preview_df["ui_is_single_method"] if "ui_is_single_method" in preview_df.columns else pd.Series(False, index=preview_df.index)
+    anchor_shell_only = preview_df["ui_is_anchor_shell_only"] if "ui_is_anchor_shell_only" in preview_df.columns else pd.Series(False, index=preview_df.index)
+    ai_prior_only = preview_df["ui_is_ai_prior_only"] if "ui_is_ai_prior_only" in preview_df.columns else pd.Series(False, index=preview_df.index)
+    not_found = preview_df["ui_is_not_found_in_structure"] if "ui_is_not_found_in_structure" in preview_df.columns else pd.Series(False, index=preview_df.index)
+    external_guard = preview_df["ui_is_external_overwide_guard"] if "ui_is_external_overwide_guard" in preview_df.columns else pd.Series(False, index=preview_df.index)
+
+    metric_cols = st.columns(7)
+    metric_cols[0].metric("高置信 residue", int(high_conf.sum()))
+    metric_cols[1].metric("Curated", int(curated.sum()))
+    metric_cols[2].metric("Review", int(needs_review.sum()))
+    metric_cols[3].metric("Single-method", int(single_method.sum()))
+    metric_cols[4].metric("Anchor-shell-only", int(anchor_shell_only.sum()))
+    metric_cols[5].metric("External-guard", int(external_guard.sum()))
+    metric_cols[6].metric("Not-found", int(not_found.sum()))
+
+    view_options = {
+        "全部 residue": pd.Series(True, index=preview_df.index),
+        "curated candidates": curated,
+        "needs review": needs_review,
+        "single-method": single_method,
+        "anchor-shell-only": anchor_shell_only,
+        "external-overwide-guard": external_guard,
+        "AI-prior-only": ai_prior_only,
+        "not-found-in-structure": not_found,
+    }
+    selected_view = st.selectbox(
+        "Support 表风险分组",
+        options=list(view_options),
+        index=0,
+        key="pocket_evidence_support_preview_view",
+    )
+    filtered_df = preview_df.loc[view_options[selected_view]].copy()
+    st.caption(
+        f"当前视图 {len(filtered_df)} / {len(preview_df)} 行。"
+        "排序规则：需要复核的 residue 优先，其次风险等级，再按 weighted_support_score 降序。"
+    )
+
+    display_cols = [
+        col
+        for col in [
+            "ui_risk_level",
+            "ui_review_group",
+            "ui_action_hint",
+            "residue_key",
+            "resname",
+            "weighted_support_score",
+            "evidence_count",
+            "method_count",
+            "high_confidence_source_count",
+            "is_curated_candidate",
+            "needs_review",
+            "review_reason",
+            "evidence_types",
+            "methods",
+            "sources",
+        ]
+        if col in filtered_df.columns
+    ]
+    if filtered_df.empty:
+        st.info(f"`{selected_view}` 当前没有 residue。")
+        return
+    st.dataframe(filtered_df[display_cols].head(200), use_container_width=True, hide_index=True)
+
+
+def _render_pocket_evidence_panel() -> None:
+    st.subheader("Pocket 证据整合")
+    st.caption(
+        "把人工/rsite、文献 residue、catalytic anchor、ligand-contact、P2Rank、fpocket 和 AI prior "
+        "统一成 pocket evidence。这个入口只生成候选 pocket，不改变 Rule/ML 排名权重。"
+    )
+
+    prefill_cols = st.columns(3)
+    if prefill_cols[0].button("从当前表单自动填充", use_container_width=True, key="prefill_pocket_evidence_inputs"):
+        _prefill_pocket_evidence_inputs_from_current_form()
+        st.success("已尝试从当前 input/feature/default 文件自动填充。")
+    with prefill_cols[1]:
+        _open_path_button("打开 pocket evidence 根目录", POCKET_EVIDENCE_ROOT, key="open_pocket_evidence_root")
+    if prefill_cols[2].button("清空 pocket evidence 表单", use_container_width=True, key="clear_pocket_evidence_form"):
+        for key in [
+            "pocket_evidence_pdb_path",
+            "pocket_evidence_manual_file_path",
+            "pocket_evidence_literature_file_path",
+            "pocket_evidence_catalytic_file_path",
+            "pocket_evidence_literature_source_table_path",
+            "pocket_evidence_catalytic_source_table_path",
+            "pocket_evidence_ai_source_table_path",
+            "pocket_evidence_ai_file_path",
+            "pocket_evidence_p2rank_file_path",
+            "pocket_evidence_fpocket_file_path",
+            "pocket_evidence_ligand_file_path",
+            "pocket_evidence_out_dir_path",
+        ]:
+            st.session_state[key] = ""
+        st.session_state["last_pocket_evidence_message"] = ""
+        st.session_state["last_pocket_evidence_summary"] = None
+        st.rerun()
+
+    with st.expander("输入文件", expanded=True):
+        st.text_input("代表 PDB 路径", key="pocket_evidence_pdb_path")
+        input_cols = st.columns(2)
+        input_cols[0].text_input("manual / rsite pocket 文件", key="pocket_evidence_manual_file_path")
+        input_cols[1].text_input("literature residue 文件", key="pocket_evidence_literature_file_path")
+        input_cols[0].text_input("catalytic / function residue 文件", key="pocket_evidence_catalytic_file_path")
+        input_cols[1].text_input("AI prior residue 文件", key="pocket_evidence_ai_file_path")
+        input_cols[0].text_input("P2Rank predictions.csv / residue list / 目录", key="pocket_evidence_p2rank_file_path")
+        input_cols[1].text_input("fpocket pocket PDB / residue list / 目录", key="pocket_evidence_fpocket_file_path")
+        st.text_input("ligand/template PDB 文件", key="pocket_evidence_ligand_file_path")
+
+    with st.expander("literature / catalytic / AI 来源审计，可选", expanded=False):
+        st.caption(
+            "这些表只用于报告追溯，不改变 pocket_evidence.csv、support CSV、Rule/ML 权重。"
+            "字段建议包含 residue_key、paper_title、pmid、doi、uniprot_id、mcsa_id、source_sentence、review_status。"
+        )
+        source_cols = st.columns(2)
+        source_cols[0].text_input(
+            "literature source audit CSV/TSV",
+            key="pocket_evidence_literature_source_table_path",
+        )
+        source_cols[1].text_input(
+            "catalytic source audit CSV/TSV",
+            key="pocket_evidence_catalytic_source_table_path",
+        )
+        st.text_input(
+            "AI prior source audit CSV/TSV",
+            key="pocket_evidence_ai_source_table_path",
+            help="AI prior 必须保留 source_sentence、evidence_level 和 review_status；它只作为待复核线索，不直接作为 ground truth。",
+        )
+
+    with st.expander("批量 result 父目录模式", expanded=False):
+        st.caption(
+            "选择标准 result/ 的父目录后，软件会自动发现 result/ 或 rsite/result/，"
+            "按 MMPBSA_energy 最低值选择一个代表 PDB，生成项目级 pocket evidence，"
+            "并输出带 candidate_curated_pocket.txt 的 input_pose_table_with_pocket_evidence.csv。"
+        )
+        project_cols = st.columns(3)
+        project_cols[0].text_input("项目 / result 父目录", key="pocket_evidence_project_root_path")
+        project_cols[1].text_input("target_prefix，可空", key="pocket_evidence_project_target_prefix")
+        project_cols[2].checkbox(
+            "允许单 PDB fallback",
+            key="pocket_evidence_allow_single_pdb_fallback",
+            help="当 pose 目录里没有 <pose_id>.pdb 但只有一个可用 PDB 时使用该文件。",
+        )
+        if st.button("从 result 父目录批量构建 pocket evidence", use_container_width=True, key="run_project_pocket_evidence"):
+            with st.spinner("正在扫描 result 目录并构建项目级 pocket evidence..."):
+                _run_project_pocket_evidence_from_ui()
+
+    with st.expander("参数", expanded=False):
+        param_cols = st.columns(4)
+        param_cols[0].text_input("运行名", key="pocket_evidence_run_name")
+        param_cols[1].text_input("抗原链", key="pocket_evidence_antigen_chain")
+        param_cols[2].text_input("anchor shell radii", key="pocket_evidence_anchor_shell_radii")
+        param_cols[3].text_input("输出目录，可空", key="pocket_evidence_out_dir_path")
+        numeric_cols = st.columns(4)
+        numeric_cols[0].number_input("ligand contact 阈值", min_value=0.1, value=4.5, step=0.1, key="pocket_evidence_ligand_contact_threshold")
+        numeric_cols[1].number_input("curated 最小支持分", min_value=0.0, value=1.2, step=0.1, key="pocket_evidence_curated_min_support")
+        numeric_cols[2].number_input("P2Rank top_n", min_value=1, value=1, step=1, key="pocket_evidence_p2rank_top_n")
+        numeric_cols[3].text_input("P2Rank rank，可空", key="pocket_evidence_p2rank_rank")
+        guard_cols = st.columns(3)
+        guard_cols[0].number_input(
+            "外部 pocket 过宽 residue 数阈值",
+            min_value=1,
+            value=35,
+            step=1,
+            key="pocket_evidence_external_overwide_max_residue_count",
+        )
+        guard_cols[1].number_input(
+            "外部 pocket 过宽比例阈值",
+            min_value=0.01,
+            max_value=1.0,
+            value=0.18,
+            step=0.01,
+            key="pocket_evidence_external_overwide_max_fraction",
+        )
+        guard_cols[2].checkbox(
+            "关闭外部 precision guard",
+            key="pocket_evidence_disable_external_precision_guard",
+            help="默认不关闭。关闭后，过宽 P2Rank/fpocket 的低置信边缘位点可能进入 candidate_curated_pocket.txt。",
+        )
+        p2rank_cols = st.columns(2)
+        p2rank_cols[0].text_input("P2Rank name，可空", key="pocket_evidence_p2rank_name")
+        p2rank_cols[1].text_input("P2Rank min_probability，可空", key="pocket_evidence_p2rank_min_probability")
+
+    if st.button("构建 pocket 证据", use_container_width=True, key="run_pocket_evidence_builder"):
+        with st.spinner("正在构建 pocket evidence..."):
+            _run_pocket_evidence_builder_from_ui()
+
+    message = str(st.session_state.get("last_pocket_evidence_message") or "")
+    if message:
+        if "失败" in message or "不存在" in message:
+            st.error(message)
+        else:
+            st.success(message)
+
+    out_dir_text = str(st.session_state.get("last_pocket_evidence_out_dir") or "").strip()
+    out_dir = Path(out_dir_text) if out_dir_text else None
+    summary = st.session_state.get("last_pocket_evidence_summary")
+    if not isinstance(summary, dict) and out_dir is not None:
+        summary = _load_json(out_dir / "pocket_evidence_summary.json")
+
+    if out_dir is not None and out_dir.exists():
+        st.caption(f"最近输出目录: `{out_dir}`")
+        metric_cols = st.columns(4)
+        if isinstance(summary, dict):
+            metric_cols[0].metric("Evidence rows", int(summary.get("evidence_row_count", 0)))
+            metric_cols[1].metric("Supported residues", int(summary.get("supported_residue_count", 0)))
+            metric_cols[2].metric("Curated candidates", int(summary.get("curated_candidate_count", 0)))
+            metric_cols[3].metric("Review residues", int(summary.get("review_residue_count", 0)))
+            source_audit = summary.get("source_audit") if isinstance(summary.get("source_audit"), dict) else {}
+            if source_audit and source_audit.get("enabled"):
+                audit_cols = st.columns(4)
+                audit_cols[0].metric("Source audit rows", int(source_audit.get("audit_row_count", 0)))
+                audit_cols[1].metric("Traceable rows", int(source_audit.get("traceable_row_count", 0)))
+                audit_cols[2].metric("Missing trace", int(source_audit.get("missing_traceable_source_count", 0)))
+                audit_cols[3].metric("Unreviewed", int(source_audit.get("unreviewed_source_count", 0)))
+                if int(source_audit.get("ai_prior_row_count", 0) or 0) > 0:
+                    ai_audit_cols = st.columns(3)
+                    ai_audit_cols[0].metric("AI prior rows", int(source_audit.get("ai_prior_row_count", 0)))
+                    ai_audit_cols[1].metric("AI missing sentence", int(source_audit.get("ai_missing_source_sentence_count", 0)))
+                    ai_audit_cols[2].metric("AI missing level", int(source_audit.get("ai_missing_evidence_level_count", 0)))
+            precision_guard = (
+                summary.get("external_precision_guard")
+                if isinstance(summary.get("external_precision_guard"), dict)
+                else {}
+            )
+            if precision_guard and precision_guard.get("enabled"):
+                guard_cols = st.columns(3)
+                guard_cols[0].metric("External guard threshold", int(precision_guard.get("threshold_count", 0)))
+                guard_cols[1].metric("Overwide sources", len(precision_guard.get("overwide_sources") or []))
+                guard_cols[2].metric("Guarded residues", int(precision_guard.get("guarded_residue_count", 0)))
+            warnings = summary.get("warnings") if isinstance(summary.get("warnings"), list) else []
+            for warning in warnings:
+                st.warning(str(warning))
+
+        project_summary = st.session_state.get("last_project_pocket_evidence_summary")
+        if not isinstance(project_summary, dict):
+            project_summary = _load_json(out_dir / "project_pocket_evidence_summary.json")
+        if isinstance(project_summary, dict):
+            representative = (
+                project_summary.get("representative_selection")
+                if isinstance(project_summary.get("representative_selection"), dict)
+                else {}
+            )
+            generated = (
+                project_summary.get("generated_input_table")
+                if isinstance(project_summary.get("generated_input_table"), dict)
+                else {}
+            )
+            st.info(
+                "项目级批量结果："
+                f"代表 PDB `{representative.get('representative_pdb_path', 'N/A')}`；"
+                f"选择依据 `{representative.get('selection_reason', 'N/A')}`；"
+                f"生成输入表 `{generated.get('path', 'N/A')}`。"
+            )
+
+        support_csv = out_dir / "pocket_residue_support.csv"
+        support_df = _load_csv(support_csv)
+        if support_df is not None and not support_df.empty:
+            _render_pocket_evidence_support_preview(support_df)
+
+        file_cols = st.columns(4)
+        with file_cols[0]:
+            _download_file_button("下载 support CSV", support_csv, mime="text/csv", key="download_pocket_evidence_support_csv")
+        with file_cols[1]:
+            _download_file_button("下载 evidence CSV", out_dir / "pocket_evidence.csv", mime="text/csv", key="download_pocket_evidence_csv")
+        with file_cols[2]:
+            _download_file_button("下载 curated pocket", out_dir / "candidate_curated_pocket.txt", mime="text/plain", key="download_candidate_curated_pocket")
+        with file_cols[3]:
+            _download_file_button("下载报告 MD", out_dir / "POCKET_EVIDENCE_REPORT.md", mime="text/markdown", key="download_pocket_evidence_report")
+
+        source_audit_cols = st.columns(2)
+        with source_audit_cols[0]:
+            _download_file_button(
+                "下载 source audit CSV",
+                out_dir / "evidence_source_audit.csv",
+                mime="text/csv",
+                key="download_pocket_source_audit_csv",
+            )
+        with source_audit_cols[1]:
+            _download_file_button(
+                "下载 source template CSV",
+                out_dir / "evidence_source_template.csv",
+                mime="text/csv",
+                key="download_pocket_source_template_csv",
+            )
+
+        ai_audit_cols = st.columns(2)
+        with ai_audit_cols[0]:
+            _download_file_button(
+                "下载 AI prior audit CSV",
+                out_dir / "ai_prior_audit.csv",
+                mime="text/csv",
+                key="download_ai_prior_audit_csv",
+            )
+        with ai_audit_cols[1]:
+            _download_file_button(
+                "下载 AI prior template CSV",
+                out_dir / "ai_prior_template.csv",
+                mime="text/csv",
+                key="download_ai_prior_template_csv",
+            )
+
+        action_cols = st.columns(3)
+        candidate_path = out_dir / "candidate_curated_pocket.txt"
+        if action_cols[0].button(
+            "设为下一轮 default_pocket_file",
+            use_container_width=True,
+            disabled=not candidate_path.exists(),
+            key="use_candidate_curated_pocket_as_default",
+        ):
+            st.session_state["default_pocket_local_path"] = str(candidate_path.resolve())
+            st.success(f"已回填 default_pocket_file: {candidate_path.resolve()}")
+        with action_cols[1]:
+            _open_path_button("打开输出目录", out_dir, key="open_pocket_evidence_out_dir")
+        with action_cols[2]:
+            _download_file_button("下载 review residues", out_dir / "review_residues.txt", mime="text/plain", key="download_review_residues")
+
+        if (out_dir / "project_pocket_evidence_summary.json").exists():
+            project_cols = st.columns(3)
+            with project_cols[0]:
+                _download_file_button(
+                    "下载项目 summary",
+                    out_dir / "project_pocket_evidence_summary.json",
+                    mime="application/json",
+                    key="download_project_pocket_evidence_summary",
+                )
+            with project_cols[1]:
+                _download_file_button(
+                    "下载项目报告",
+                    out_dir / "project_pocket_evidence_report.md",
+                    mime="text/markdown",
+                    key="download_project_pocket_evidence_report",
+                )
+            with project_cols[2]:
+                _download_file_button(
+                    "下载回填输入表",
+                    out_dir / "input_pose_table_with_pocket_evidence.csv",
+                    mime="text/csv",
+                    key="download_project_pocket_input_csv",
+                )
+
+    stdout_text = str(st.session_state.get("last_pocket_evidence_stdout") or "")
+    stderr_text = str(st.session_state.get("last_pocket_evidence_stderr") or "")
+    if stdout_text or stderr_text:
+        with st.expander("查看 pocket evidence 日志", expanded=False):
+            if stdout_text:
+                st.subheader("STDOUT")
+                st.code(stdout_text)
+            if stderr_text:
+                st.subheader("STDERR")
+                st.code(stderr_text)
+
+
 def _run_cd38_finalize_from_ui(*, import_dry_run: bool, run_discovered: bool, run_sensitivity: bool) -> None:
     source_path = _normalize_local_path_text(str(st.session_state.get("cd38_returned_source_path") or ""))
     if source_path is not None and not source_path.exists():
@@ -8592,6 +9446,39 @@ def _initialize_state() -> None:
     st.session_state.setdefault("last_cd38_workflow_selftest_message", "")
     st.session_state.setdefault("last_cd38_workflow_selftest_stdout", "")
     st.session_state.setdefault("last_cd38_workflow_selftest_stderr", "")
+    st.session_state.setdefault("pocket_evidence_run_name", "pocket_evidence")
+    st.session_state.setdefault("pocket_evidence_pdb_path", "")
+    st.session_state.setdefault("pocket_evidence_manual_file_path", "")
+    st.session_state.setdefault("pocket_evidence_literature_file_path", "")
+    st.session_state.setdefault("pocket_evidence_catalytic_file_path", "")
+    st.session_state.setdefault("pocket_evidence_literature_source_table_path", "")
+    st.session_state.setdefault("pocket_evidence_catalytic_source_table_path", "")
+    st.session_state.setdefault("pocket_evidence_ai_source_table_path", "")
+    st.session_state.setdefault("pocket_evidence_ai_file_path", "")
+    st.session_state.setdefault("pocket_evidence_p2rank_file_path", "")
+    st.session_state.setdefault("pocket_evidence_fpocket_file_path", "")
+    st.session_state.setdefault("pocket_evidence_ligand_file_path", "")
+    st.session_state.setdefault("pocket_evidence_project_root_path", "")
+    st.session_state.setdefault("pocket_evidence_project_target_prefix", "")
+    st.session_state.setdefault("pocket_evidence_allow_single_pdb_fallback", False)
+    st.session_state.setdefault("pocket_evidence_out_dir_path", "")
+    st.session_state.setdefault("pocket_evidence_antigen_chain", DEFAULT_ANTIGEN_CHAIN)
+    st.session_state.setdefault("pocket_evidence_anchor_shell_radii", "4,6,8")
+    st.session_state.setdefault("pocket_evidence_ligand_contact_threshold", 4.5)
+    st.session_state.setdefault("pocket_evidence_curated_min_support", 1.2)
+    st.session_state.setdefault("pocket_evidence_external_overwide_max_residue_count", 35)
+    st.session_state.setdefault("pocket_evidence_external_overwide_max_fraction", 0.18)
+    st.session_state.setdefault("pocket_evidence_disable_external_precision_guard", False)
+    st.session_state.setdefault("pocket_evidence_p2rank_top_n", 1)
+    st.session_state.setdefault("pocket_evidence_p2rank_rank", "")
+    st.session_state.setdefault("pocket_evidence_p2rank_name", "")
+    st.session_state.setdefault("pocket_evidence_p2rank_min_probability", "")
+    st.session_state.setdefault("last_pocket_evidence_message", "")
+    st.session_state.setdefault("last_pocket_evidence_stdout", "")
+    st.session_state.setdefault("last_pocket_evidence_stderr", "")
+    st.session_state.setdefault("last_pocket_evidence_out_dir", "")
+    st.session_state.setdefault("last_pocket_evidence_summary", None)
+    st.session_state.setdefault("last_project_pocket_evidence_summary", None)
     st.session_state.setdefault("run_queue", [])
     st.session_state.setdefault("active_process", None)
     st.session_state.setdefault("active_run_info", None)
@@ -8906,6 +9793,7 @@ def main() -> None:
         st.text_input("或填写 default_pocket_file 本地路径", key="default_pocket_local_path")
         default_catalytic_upload = st.file_uploader("上传 default catalytic file", key="default_catalytic_upload")
         st.text_input("或填写 default_catalytic_file 本地路径", key="default_catalytic_local_path")
+        st.caption("catalytic file 会同时用于直接催化残基接触诊断，以及 4A/6A/8A catalytic-anchor 3D shell pocket 推断。")
         default_ligand_upload = st.file_uploader("上传 default ligand file", key="default_ligand_upload")
         st.text_input("或填写 default_ligand_file 本地路径", key="default_ligand_local_path")
 
@@ -11035,6 +11923,8 @@ def main() -> None:
 
     with tab_diag:
         _render_diagnostics_panel(diagnostics, last_error, metadata)
+        st.divider()
+        _render_pocket_evidence_panel()
         st.divider()
         _render_cd38_public_starter_panel()
 

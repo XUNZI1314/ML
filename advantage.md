@@ -22,6 +22,9 @@
 - 支持本地交互式页面、历史运行、多运行对比、导出 HTML / PDF / zip。
 - 支持一键 synthetic demo 与可运行 toy PDB mini 示例，能分别验证“报告链路”和“真实 PDB 输入链路”。
 - 针对 CD38 pocket benchmark 已有 ligand-contact、P2Rank、方法共识、参数敏感性、fpocket 接入入口、公开结构 starter 一键刷新入口和外部工具 next-run runbook。
+- 已接入 catalytic-anchor pocket 诊断：当没有直接 pocket 文献时，可用文献/数据库催化残基作为 3D anchor 推断功能口袋邻域，并输出可复核特征。
+- 已新增 pocket 证据整合入口：可把人工/rsite、文献 residue、catalytic-anchor shell、ligand-contact、P2Rank、fpocket 和 AI prior 统一成 `pocket_evidence.csv`，再输出可复核的 `candidate_curated_pocket.txt`。
+- 已新增 evidence source audit、AI prior audit 和 external precision guard：文献/催化/AI 来源可以追溯，P2Rank/fpocket 过宽边缘 residue 不会直接进入 curated pocket，AI prior 也不能直接当 ground truth。
 - 已补 [ML.md](ML.md)，可以直接向评审解释 Rule、MLP、pose/conformer/nanobody 聚合和共识排序的架构。
 
 ## 2. 同类型产品常见缺陷
@@ -51,12 +54,16 @@
 - 不同工具或参数输出的 pocket 边界可能差异很大。
 - coverage 高不代表 pocket 定义足够紧，过宽 pocket 会导致误判。
 - 很多工具只输出候选 pocket，不会自动与已知功能残基、催化残基或实验关注位点做闭环验证。
+- 当文献只给关键催化残基、没有给明确 pocket 边界时，多数工具不会把“文献锚点 + 3D 结构邻域 + 下游阻断诊断”串成可审计流程。
 - 对初学者来说，输出文件格式多、整合成本高。
 
 对本项目的启发：
 
 - 我们把 pocket 结果纳入下游 Rule / ML / QC / benchmark，而不是只停留在 pocket 预测本身。
 - 当前已经补了 pocket 方法共识、CD38 benchmark、参数敏感性和 `pocket_shape_overwide_proxy`，能把“pocket 是否偏宽”显式暴露出来。
+- catalytic-anchor 诊断进一步补上“文献催化残基如何转成 3D pocket 邻域”的路径，但仍应作为人工复核和解释模块，而不是自动替代 pocket finder。
+- `build_pocket_evidence.py` 把多来源 pocket 证据先标准化再汇总，能把 high-confidence 候选和需要人工复核的 single-method / anchor-shell-only / external-overwide / AI-prior-only residue 分开，这是多数通用 pocket finder 不会主动提供的决策层。
+- AI prior 被限定为“待复核线索”：必须保留来源句子、证据等级和人工确认状态；只有人工确认后才建议转写为 manual/literature evidence。这降低了 AI 幻觉直接污染 pocket 定义的风险。
 
 ### 2.3 Docking scoring / ranking 工具的缺陷
 
@@ -160,6 +167,7 @@
 - ligand path bottleneck score
 - ligand path exit block fraction
 - pocket shape overwide proxy
+- catalytic-anchor shell hit / distance / overlap / overwide proxy
 
 ### 3.5 从演示到真实输入的迁移成本更低
 

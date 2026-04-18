@@ -32,8 +32,8 @@ python run_demo_pipeline.py
 
 如果你正在使用本地软件，也可以在左侧“没有数据时”点击“生成并立即运行 demo”；如果想先检查参数，则点击“生成并载入 demo 输入”，再手动点击“立即运行”。
 
-1. 准备 `input_pose_table.csv`，至少包含 `nanobody_id`、`conformer_id`、`pose_id`、`pdb_path`。如果数据是 `A/result/vhh/CD38_x/pose/pose.pdb` 结构，可以在本地软件导入 `A/` 自动生成输入表；命令行则在 `A/` 运行 `python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv`。
-2. 运行 `python run_recommended_pipeline.py --input_csv input_pose_table.csv --out_dir my_outputs`。
+1. 如果数据是标准 `result/vhh/CD38_i/pose/pose.pdb` 或 `rsite/result/vhh/CD38_i/pose/pose.pdb` 结构，可以在 `result` 父目录运行 `python build_pose_features_from_result_tree.py`，直接生成 `pose_features.csv`。该命令会自动解析 `FINAL_RESULTS_MMPBSA.dat`、`*_interface.sc`、`FINAL_DECOMP_MMPBSA.dat`、`MMPBSA_normalized.txt`、`score.txt`、`*_accuracy.txt` 等 sidecar 文件。
+2. 如果已经有 `input_pose_table.csv`，也可以运行 `python run_recommended_pipeline.py --input_csv input_pose_table.csv --out_dir my_outputs`；如果已经生成 `pose_features.csv`，可以运行 `python run_recommended_pipeline.py --feature_csv pose_features.csv --out_dir my_outputs`。
 3. 先打开 `my_outputs/recommended_pipeline_report.md`，确认流程是否完整跑完。
 4. 再看 `my_outputs/batch_decision_summary/batch_decision_summary.md`，快速判断本批次能不能解读、优先看谁、先修什么风险。
 5. 如果分数解释涉及 mouth/path/pocket 阻断，查看 `my_outputs/geometry_proxy_audit/geometry_proxy_audit_report.md`，确认几何 proxy 没有明显自相矛盾。
@@ -132,6 +132,13 @@ python run_demo_pipeline.py
 - catalytic_hit_fraction
 - min_distance_to_catalytic_residues
 - catalytic_block_flag
+- catalytic-anchor 3D 口袋推断
+- catalytic_anchor_primary_shell_residue_count
+- catalytic_anchor_primary_shell_hit_fraction
+- catalytic_anchor_min_distance_to_primary_shell
+- catalytic_anchor_manual_overlap_fraction_of_shell
+- catalytic_anchor_shell_overwide_proxy
+- 说明：该模块用 catalytic_file 中的催化/功能残基作为 3D anchor，自动生成 4A/6A/8A shell 诊断；默认只作为解释和复核特征，不写入 rule baseline 的正式权重
 - 中心/界面几何
 - distance_to_pocket_center
 - nanobody_centroid_to_pocket_center
@@ -899,8 +906,8 @@ python build_feature_table.py --input_csv input_pose_table.csv --out_csv pose_fe
 - --default_pocket_file
 - --default_catalytic_file
 - --default_ligand_file
-- --default_antigen_chain
-- --default_nanobody_chain
+- --default_antigen_chain，所有项目默认 `B`
+- --default_nanobody_chain，所有项目默认 `A`
 - --skip_failed_rows
 - --qc_json
 
@@ -1336,11 +1343,11 @@ python export_structure_annotations.py --pdb_path complex.pdb --out_dir structur
 python export_structure_annotations.py ^
   --pdb_path complex.pdb ^
   --out_dir structure_annotation_outputs ^
-  --antigen_chain A ^
-  --nanobody_chain H ^
+  --antigen_chain B ^
+  --nanobody_chain A ^
   --pocket_file pocket.txt ^
   --catalytic_file catalytic.txt ^
-  --key_residues "A:45,H:101"
+  --key_residues "B:45,A:101"
 ```
 
 特点:
@@ -1351,6 +1358,65 @@ python export_structure_annotations.py ^
 - 支持用户关键残基输入并写回统一 bundle
 - 导出 pocket payload 与简化阻断摘要
 - 导出 `analysis_bundle.json`，便于后续前端或展示壳直接消费
+
+### 4.14.1 构建 pocket 证据表和候选精修口袋
+
+如果你要追求 pocket 定义精度，建议先把人工 rsite、文献功能残基、P2Rank/fpocket、ligand-contact 和 AI residue prior 放到同一张证据表里复核，而不是直接相信单一 pocket finder：
+
+```bash
+python build_pocket_evidence.py ^
+  --pdb_path complex.pdb ^
+  --manual_pocket_file pocket.txt ^
+  --catalytic_file catalytic.txt ^
+  --antigen_chain B ^
+  --out_dir pocket_evidence_outputs
+```
+
+可选输入：
+
+- `--literature_file literature_residues.txt`
+- `--literature_source_table literature_source_audit.csv`
+- `--catalytic_source_table catalytic_source_audit.csv`
+- `--ligand_file ligand_template.pdb`
+- `--p2rank_file p2rank_predictions.csv`
+- `--fpocket_file pocket1_atm.pdb`
+- `--ai_pocket_file ai_prior_residues.txt`
+- `--ai_source_table ai_prior_source_audit.csv`
+
+输出：
+
+- `pocket_evidence.csv`：逐 residue 证据明细
+- `pocket_residue_support.csv`：聚合支持分、来源数、复核原因
+- `candidate_curated_pocket.txt`：可作为下一轮 `pocket_file` 的候选口袋
+- `review_residues.txt`：需要人工复核的低/单一证据 residue
+- `evidence_source_audit.csv`：literature/catalytic residue 的来源追溯审计，标记缺 PMID/DOI/UniProt/M-CSA/PDB/来源句子或未人工确认的行
+- `evidence_source_template.csv`：可直接补填的来源字段模板
+- `ai_prior_audit.csv`：AI prior 的离线审计表，标记缺来源句子、证据等级或人工复核状态的行
+- `ai_prior_template.csv`：AI prior 审计补填模板
+- `pocket_evidence_summary.json`
+- `POCKET_EVIDENCE_REPORT.md`
+
+precision guard：默认开启。若 P2Rank/fpocket 的预测 residue 数超过 `max(35, 18% * 结构 residue 数)`，且某些 residue 只来自过宽外部工具、AI prior 或 catalytic shell 这类低/中置信来源，没有 manual/literature/catalytic core/ligand-contact 支持，则这些 residue 会被标记 `external_overwide_guard`，保留在 `review_residues.txt`，不会进入 `candidate_curated_pocket.txt`。可以用 `--external_overwide_max_residue_count`、`--external_overwide_max_fraction` 调阈值，极特殊情况下可用 `--disable_external_precision_guard` 关闭。
+
+AI prior 规则：`--ai_pocket_file` 只表示待复核 residue prior。它不会参与 curated 判定的支持分/方法数，不能单独或与外部工具一起把 residue 推入 `candidate_curated_pocket.txt`。如果 AI 来自文献抽取，必须用 `--ai_source_table` 保留 `source_sentence`、`evidence_level`、`review_status`，确认后应转写到 `manual_pocket_file` 或 `literature_file`，而不是把 AI prior 当 ground truth。
+
+边界：该脚本只生成 pocket 证据，不改变 Rule/ML 排名权重。确认 `candidate_curated_pocket.txt` 合理后，再把它接入 `build_feature_table.py` 或推荐 pipeline。
+
+来源审计表建议字段：
+
+```csv
+residue_key,evidence_role,source_kind,paper_title,pmid,doi,uniprot_id,uniprot_feature,mcsa_id,pdb_id,source_sentence,evidence_level,curator,review_status,manual_note
+B:82,catalytic,paper,Example title,12345678,10.xxxx/example,P28907,active site,,1ABC,Source sentence,strong,your_name,confirmed,manual note
+```
+
+`review_status` 建议使用 `confirmed` / `reviewed` / `accepted` / `curated` 表示已确认；否则报告会把该 residue 标为未复核来源。`residue_key` 支持和 pocket 文件相同的范围写法，例如 `B:83-84`。
+
+AI source audit 表可以沿用相同字段，并额外填写：
+
+```csv
+residue_key,evidence_role,source_kind,paper_title,pmid,doi,source_sentence,evidence_level,ai_model,ai_prompt_id,ai_extraction_confidence,curator,review_status,manual_note
+B:82,ai_prior,ai_extraction,Example title,12345678,10.xxxx/example,Sentence copied from source,medium,gpt-x,prompt_v1,0.72,your_name,unreviewed,needs manual check
+```
 
 ### 4.15 本地交互式运行界面
 
@@ -1414,6 +1480,14 @@ start_local_app.bat
   - 展示 failed 行列表
   - 展示 warning 行列表
   - 展示全空列和近常量列提示
+- 支持在“诊断”页构建 pocket evidence：
+  - 可选择代表 PDB、manual/rsite、literature/catalytic、P2Rank、fpocket、ligand 和 AI prior 文件
+  - 生成并按 `全部 residue`、`curated candidates`、`needs review`、`single-method`、`anchor-shell-only`、`AI-prior-only`、`not-found-in-structure` 预览 `pocket_residue_support.csv`
+  - 对过宽 P2Rank/fpocket 预测显示 `external-overwide-guard` 分组，避免外部工具边缘 residue 直接进入 curated pocket
+  - 预览表会增加 UI 侧 `ui_risk_level`、`ui_review_group` 和 `ui_action_hint`，但不会写回原始 CSV
+  - 支持标准 `result/` 父目录批量模式：自动发现 `result/` 或 `rsite/result/`，按 `MMPBSA_energy` 最低值选择代表 PDB，生成项目级 pocket evidence，并写出 `input_pose_table_with_pocket_evidence.csv`
+  - 下载 `pocket_evidence.csv`、`candidate_curated_pocket.txt`、`review_residues.txt`、`evidence_source_audit.csv`、`ai_prior_audit.csv` 和 Markdown 报告
+  - 可把 `candidate_curated_pocket.txt` 一键回填为下一轮 `default_pocket_file`
 - 支持 `运行对比` 面板：
   - 选择多条历史运行做并排比较
   - 对比 rule/ML 指标、训练摘要和 QC 摘要
@@ -2313,6 +2387,30 @@ build_geometry_proxy_audit.py:
 - geometry_proxy_feature_summary.csv
 - geometry_proxy_flagged_poses.csv
 - geometry_proxy_candidate_audit.csv
+
+build_pocket_evidence.py:
+- pocket_evidence.csv
+- pocket_residue_support.csv
+- candidate_curated_pocket.txt
+- review_residues.txt
+- evidence_source_audit.csv
+- evidence_source_template.csv
+- pocket_evidence_summary.json
+- POCKET_EVIDENCE_REPORT.md
+- ai_prior_audit.csv
+- ai_prior_template.csv
+
+build_project_pocket_evidence.py:
+- input_pose_table_with_pocket_evidence.csv
+- project_pocket_evidence_summary.json
+- project_pocket_evidence_report.md
+- pocket_evidence.csv
+- pocket_residue_support.csv
+- candidate_curated_pocket.txt
+- evidence_source_audit.csv
+- evidence_source_template.csv
+- ai_prior_audit.csv
+- ai_prior_template.csv
 
 prepare_cd38_fpocket_panel.py:
 - fpocket_discovered_manifest.csv

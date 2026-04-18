@@ -53,6 +53,9 @@ class GeometryFeatureConfig:
     catalytic_block_min_hits: int = 1
 
 
+DEFAULT_CATALYTIC_ANCHOR_SHELL_RADII = (4.0, 6.0, 8.0)
+
+
 def _is_hydrogen(atom_like: Any) -> bool:
     """Return True if the atom-like object is a hydrogen/deuterium atom."""
     if hasattr(atom_like, "element"):
@@ -325,6 +328,27 @@ def _global_min_distance(coords_a: np.ndarray, coords_b: np.ndarray) -> float:
 def _nan() -> float:
     """Return float NaN helper."""
     return float("nan")
+
+
+def _radius_label(radius: float) -> str:
+    """Convert an Angstrom radius to a stable feature-name token."""
+    value = float(radius)
+    if abs(value - round(value)) <= 1e-9:
+        return f"{int(round(value))}A"
+    return f"{value:g}".replace(".", "p").replace("-", "m") + "A"
+
+
+def _residue_key_sort_key(key: str) -> tuple[str, int, str]:
+    """Sort residue keys by chain, residue number, then raw text."""
+    text = str(key)
+    parts = text.split(":")
+    chain = parts[0] if parts else ""
+    number = 0
+    if len(parts) > 1:
+        token = parts[1]
+        if token.lstrip("-").isdigit():
+            number = int(token)
+    return chain, number, text
 
 
 def _safe_unit_vector(vector: np.ndarray) -> np.ndarray | None:
@@ -950,6 +974,174 @@ def compute_catalytic_features(
     result["catalytic_hit_count"] = float(hit_count)
     result["catalytic_hit_fraction"] = hit_fraction
     result["catalytic_block_flag"] = 1.0 if hit_count >= min_hits else 0.0
+    return result
+
+
+def _coerce_shell_radii(radii: Any) -> tuple[float, ...]:
+    """Normalize user/config shell radii and keep stable ordering."""
+    if radii is None:
+        return DEFAULT_CATALYTIC_ANCHOR_SHELL_RADII
+    if isinstance(radii, str):
+        raw_items = [item.strip() for item in radii.split(",") if item.strip()]
+    else:
+        try:
+            raw_items = list(radii)
+        except TypeError:
+            raw_items = [radii]
+
+    clean: list[float] = []
+    for item in raw_items:
+        try:
+            value = float(item)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(value) and value > 0.0:
+            clean.append(value)
+
+    if not clean:
+        return DEFAULT_CATALYTIC_ANCHOR_SHELL_RADII
+    return tuple(sorted(set(clean)))
+
+
+def compute_catalytic_anchor_pocket_features(
+    antigen_residues: Any,
+    nanobody_atoms: Any,
+    catalytic_residues: Any = None,
+    pocket_residues: Any = None,
+    residue_reference: Any = None,
+    shell_radii: Any = DEFAULT_CATALYTIC_ANCHOR_SHELL_RADII,
+    primary_radius: float = 6.0,
+    contact_threshold: float = 4.5,
+) -> dict[str, Any]:
+    """Infer enzyme active-site pocket diagnostics from catalytic anchors.
+
+    The method treats literature/user catalytic residues as high-confidence
+    spatial anchors, then creates antigen-residue shells around those anchors.
+    It is intentionally diagnostic: it does not replace manual pocket input or
+    assign formal ranking weights.
+    """
+    radii = _coerce_shell_radii(shell_radii)
+    primary = float(primary_radius)
+    if not np.isfinite(primary) or primary <= 0.0:
+        primary = 6.0
+    if not any(abs(primary - radius) <= 1e-9 for radius in radii):
+        radii = tuple(sorted(set((*radii, primary))))
+
+    threshold = max(float(contact_threshold), 0.0)
+    result: dict[str, Any] = {
+        "catalytic_anchor_has_input": 0.0,
+        "catalytic_anchor_core_residue_count": 0.0,
+        "catalytic_anchor_antigen_residue_count": 0.0,
+        "catalytic_anchor_primary_radius": primary,
+        "catalytic_anchor_primary_shell_residue_count": 0.0,
+        "catalytic_anchor_primary_shell_fraction_of_antigen": _nan(),
+        "catalytic_anchor_primary_shell_hit_count": 0.0,
+        "catalytic_anchor_primary_shell_hit_fraction": _nan(),
+        "catalytic_anchor_min_distance_to_primary_shell": _nan(),
+        "catalytic_anchor_manual_overlap_count": 0.0,
+        "catalytic_anchor_manual_overlap_fraction_of_shell": _nan(),
+        "catalytic_anchor_manual_overlap_fraction_of_pocket": _nan(),
+        "catalytic_anchor_shell_overwide_proxy": _nan(),
+        "catalytic_anchor_shell_overwide_flag": 0.0,
+        "catalytic_anchor_primary_shell_keys": "",
+    }
+    for radius in radii:
+        label = _radius_label(radius)
+        result[f"catalytic_anchor_shell_{label}_residue_count"] = 0.0
+        result[f"catalytic_anchor_shell_{label}_fraction_of_antigen"] = _nan()
+        result[f"catalytic_anchor_shell_{label}_hit_count"] = 0.0
+        result[f"catalytic_anchor_shell_{label}_hit_fraction"] = _nan()
+        result[f"catalytic_anchor_shell_{label}_min_distance_to_nanobody"] = _nan()
+
+    reference = residue_reference if residue_reference is not None else antigen_residues
+    all_geo = _resolve_pocket_geo(antigen_residues, residue_reference=reference)
+    catalytic_geo = _resolve_pocket_geo(catalytic_residues, residue_reference=reference)
+    if not all_geo or not catalytic_geo:
+        return result
+
+    catalytic_atoms = _concat_residue_atoms(catalytic_geo)
+    if catalytic_atoms.shape[0] == 0:
+        return result
+
+    result["catalytic_anchor_has_input"] = 1.0
+    result["catalytic_anchor_core_residue_count"] = float(len(catalytic_geo))
+    result["catalytic_anchor_antigen_residue_count"] = float(len(all_geo))
+
+    residue_to_anchor_dist = compute_residue_min_distances(
+        residue_geometries=all_geo,
+        reference_atoms=catalytic_atoms,
+        distance_level="atom",
+    )
+    nb_coords = _coords_from_atoms(nanobody_atoms, heavy_only=True)
+    pocket_geo = _resolve_pocket_geo(pocket_residues, residue_reference=reference)
+    pocket_keys = {geo.key for geo in pocket_geo}
+
+    shell_by_radius: dict[float, list[ResidueGeometry]] = {}
+    for radius in radii:
+        mask = np.isfinite(residue_to_anchor_dist) & (residue_to_anchor_dist <= float(radius))
+        shell_geo = [geo for geo, keep in zip(all_geo, mask) if bool(keep)]
+        shell_by_radius[float(radius)] = shell_geo
+        label = _radius_label(float(radius))
+        shell_count = len(shell_geo)
+        result[f"catalytic_anchor_shell_{label}_residue_count"] = float(shell_count)
+        result[f"catalytic_anchor_shell_{label}_fraction_of_antigen"] = float(shell_count / max(len(all_geo), 1))
+
+        shell_atoms = _concat_residue_atoms(shell_geo)
+        if shell_count > 0 and nb_coords.shape[0] > 0 and shell_atoms.shape[0] > 0:
+            result[f"catalytic_anchor_shell_{label}_min_distance_to_nanobody"] = _global_min_distance(
+                nb_coords,
+                shell_atoms,
+            )
+            shell_min_dists = compute_residue_min_distances(
+                residue_geometries=shell_geo,
+                reference_atoms=nb_coords,
+                distance_level="atom",
+            )
+            hit_mask = np.isfinite(shell_min_dists) & (shell_min_dists <= threshold)
+            hit_count = int(np.sum(hit_mask))
+            result[f"catalytic_anchor_shell_{label}_hit_count"] = float(hit_count)
+            result[f"catalytic_anchor_shell_{label}_hit_fraction"] = float(hit_count / shell_count)
+        elif shell_count > 0:
+            result[f"catalytic_anchor_shell_{label}_hit_fraction"] = 0.0
+
+    primary_key = min(shell_by_radius, key=lambda radius: abs(radius - primary))
+    primary_geo = shell_by_radius.get(primary_key, [])
+    primary_label = _radius_label(primary_key)
+    primary_keys = {geo.key for geo in primary_geo}
+    result["catalytic_anchor_primary_radius"] = float(primary_key)
+    result["catalytic_anchor_primary_shell_residue_count"] = result[
+        f"catalytic_anchor_shell_{primary_label}_residue_count"
+    ]
+    result["catalytic_anchor_primary_shell_fraction_of_antigen"] = result[
+        f"catalytic_anchor_shell_{primary_label}_fraction_of_antigen"
+    ]
+    result["catalytic_anchor_primary_shell_hit_count"] = result[
+        f"catalytic_anchor_shell_{primary_label}_hit_count"
+    ]
+    result["catalytic_anchor_primary_shell_hit_fraction"] = result[
+        f"catalytic_anchor_shell_{primary_label}_hit_fraction"
+    ]
+    result["catalytic_anchor_min_distance_to_primary_shell"] = result[
+        f"catalytic_anchor_shell_{primary_label}_min_distance_to_nanobody"
+    ]
+    result["catalytic_anchor_primary_shell_keys"] = ";".join(
+        sorted(primary_keys, key=_residue_key_sort_key)
+    )
+
+    if primary_keys and pocket_keys:
+        overlap_count = len(primary_keys & pocket_keys)
+        result["catalytic_anchor_manual_overlap_count"] = float(overlap_count)
+        result["catalytic_anchor_manual_overlap_fraction_of_shell"] = float(overlap_count / max(len(primary_keys), 1))
+        result["catalytic_anchor_manual_overlap_fraction_of_pocket"] = float(overlap_count / max(len(pocket_keys), 1))
+
+    shell_count = float(len(primary_geo))
+    shell_fraction = shell_count / max(float(len(all_geo)), 1.0)
+    count_penalty = float(np.clip((shell_count - 24.0) / 48.0, 0.0, 1.0))
+    fraction_penalty = float(np.clip((shell_fraction - 0.18) / 0.32, 0.0, 1.0))
+    radius_penalty = float(np.clip((primary_key - 6.0) / 6.0, 0.0, 1.0))
+    overwide_proxy = float(np.clip(0.45 * count_penalty + 0.40 * fraction_penalty + 0.15 * radius_penalty, 0.0, 1.0))
+    result["catalytic_anchor_shell_overwide_proxy"] = overwide_proxy
+    result["catalytic_anchor_shell_overwide_flag"] = 1.0 if overwide_proxy >= 0.55 else 0.0
     return result
 
 
@@ -1705,6 +1897,30 @@ def compute_all_geometry_features(
         "min_distance_to_catalytic_residues": _nan(),
         "catalytic_block_flag": 0.0,
     }
+    catalytic_anchor_defaults = {
+        "catalytic_anchor_has_input": 0.0,
+        "catalytic_anchor_core_residue_count": 0.0,
+        "catalytic_anchor_antigen_residue_count": 0.0,
+        "catalytic_anchor_primary_radius": 6.0,
+        "catalytic_anchor_primary_shell_residue_count": 0.0,
+        "catalytic_anchor_primary_shell_fraction_of_antigen": _nan(),
+        "catalytic_anchor_primary_shell_hit_count": 0.0,
+        "catalytic_anchor_primary_shell_hit_fraction": _nan(),
+        "catalytic_anchor_min_distance_to_primary_shell": _nan(),
+        "catalytic_anchor_manual_overlap_count": 0.0,
+        "catalytic_anchor_manual_overlap_fraction_of_shell": _nan(),
+        "catalytic_anchor_manual_overlap_fraction_of_pocket": _nan(),
+        "catalytic_anchor_shell_overwide_proxy": _nan(),
+        "catalytic_anchor_shell_overwide_flag": 0.0,
+        "catalytic_anchor_primary_shell_keys": "",
+    }
+    for radius in DEFAULT_CATALYTIC_ANCHOR_SHELL_RADII:
+        label = _radius_label(radius)
+        catalytic_anchor_defaults[f"catalytic_anchor_shell_{label}_residue_count"] = 0.0
+        catalytic_anchor_defaults[f"catalytic_anchor_shell_{label}_fraction_of_antigen"] = _nan()
+        catalytic_anchor_defaults[f"catalytic_anchor_shell_{label}_hit_count"] = 0.0
+        catalytic_anchor_defaults[f"catalytic_anchor_shell_{label}_hit_fraction"] = _nan()
+        catalytic_anchor_defaults[f"catalytic_anchor_shell_{label}_min_distance_to_nanobody"] = _nan()
     center_defaults = {
         "distance_to_pocket_center": _nan(),
         "nanobody_centroid_to_pocket_center": _nan(),
@@ -1775,6 +1991,20 @@ def compute_all_geometry_features(
         ),
         catalytic_defaults,
     )
+    catalytic_anchor_features = _safe_compute(
+        "catalytic_anchor",
+        lambda: compute_catalytic_anchor_pocket_features(
+            antigen_residues=antigen_residues,
+            nanobody_atoms=nanobody_atoms,
+            catalytic_residues=catalytic_residues,
+            pocket_residues=pocket_residues,
+            residue_reference=residue_reference,
+            shell_radii=DEFAULT_CATALYTIC_ANCHOR_SHELL_RADII,
+            primary_radius=6.0,
+            contact_threshold=atom_contact_threshold,
+        ),
+        catalytic_anchor_defaults,
+    )
     center_features = _safe_compute(
         "center",
         lambda: compute_pocket_center_features(
@@ -1824,6 +2054,7 @@ def compute_all_geometry_features(
     all_features.update(pocket_features)
     all_features.update(pocket_shape_features)
     all_features.update(catalytic_features)
+    all_features.update(catalytic_anchor_features)
     all_features.update(center_features)
     all_features.update(mouth_features)
     all_features.update(occupancy_features)
@@ -1861,6 +2092,35 @@ def compute_all_geometry_features(
         "catalytic_hit_fraction",
         "min_distance_to_catalytic_residues",
         "catalytic_block_flag",
+        "catalytic_anchor_has_input",
+        "catalytic_anchor_core_residue_count",
+        "catalytic_anchor_antigen_residue_count",
+        "catalytic_anchor_primary_radius",
+        "catalytic_anchor_primary_shell_residue_count",
+        "catalytic_anchor_primary_shell_fraction_of_antigen",
+        "catalytic_anchor_primary_shell_hit_count",
+        "catalytic_anchor_primary_shell_hit_fraction",
+        "catalytic_anchor_min_distance_to_primary_shell",
+        "catalytic_anchor_manual_overlap_count",
+        "catalytic_anchor_manual_overlap_fraction_of_shell",
+        "catalytic_anchor_manual_overlap_fraction_of_pocket",
+        "catalytic_anchor_shell_overwide_proxy",
+        "catalytic_anchor_shell_overwide_flag",
+        "catalytic_anchor_shell_4A_residue_count",
+        "catalytic_anchor_shell_4A_fraction_of_antigen",
+        "catalytic_anchor_shell_4A_hit_count",
+        "catalytic_anchor_shell_4A_hit_fraction",
+        "catalytic_anchor_shell_4A_min_distance_to_nanobody",
+        "catalytic_anchor_shell_6A_residue_count",
+        "catalytic_anchor_shell_6A_fraction_of_antigen",
+        "catalytic_anchor_shell_6A_hit_count",
+        "catalytic_anchor_shell_6A_hit_fraction",
+        "catalytic_anchor_shell_6A_min_distance_to_nanobody",
+        "catalytic_anchor_shell_8A_residue_count",
+        "catalytic_anchor_shell_8A_fraction_of_antigen",
+        "catalytic_anchor_shell_8A_hit_count",
+        "catalytic_anchor_shell_8A_hit_fraction",
+        "catalytic_anchor_shell_8A_min_distance_to_nanobody",
         "distance_to_pocket_center",
         "nanobody_centroid_to_pocket_center",
         "distance_interface_centroid_to_pocket_center",
@@ -1903,6 +2163,7 @@ __all__ = [
     "compute_pocket_features",
     "compute_pocket_shape_features",
     "compute_catalytic_features",
+    "compute_catalytic_anchor_pocket_features",
     "compute_pocket_center_features",
     "infer_mouth_residues",
     "compute_mouth_occlusion_features",

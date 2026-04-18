@@ -264,6 +264,33 @@ def _expand_residue_range_token(raw: str) -> list[int] | None:
     return list(range(start, end + 1))
 
 
+def _looks_like_chain_token(raw: str) -> bool:
+    text = str(raw).strip()
+    return bool(text) and bool(re.fullmatch(r"[A-Za-z0-9_]+", text))
+
+
+def _parse_residue_chain_reversed_token(token: str) -> tuple[str, ...] | None:
+    """Parse residue:chain tokens such as ``147:B`` or ``82-88:B``."""
+    text = _normalize_residue_definition_text(token)
+    parts = [p.strip() for p in text.split(":") if p.strip()]
+    if len(parts) != 2:
+        return None
+
+    res_token, chain = parts
+    if not _looks_like_chain_token(chain):
+        return None
+
+    expanded = _expand_residue_range_token(res_token)
+    if expanded is not None:
+        return tuple(normalize_residue_key(chain, resseq) for resseq in expanded)
+
+    try:
+        resseq, icode = _parse_resseq_icode(res_token)
+    except ValueError:
+        return None
+    return (normalize_residue_key(chain, resseq, icode),)
+
+
 def normalize_residue_key(chain_id: Any, resseq: Any, icode: Any = "") -> str:
     """Normalize residue identity to a canonical key.
 
@@ -300,6 +327,7 @@ def parse_residue_token(token: str, default_chain: str | None = None) -> str:
 
     Supported token formats include:
     - "A:45"
+    - "45:A"
     - "A:45A"
     - "A:45:A"
     - "A 45"
@@ -314,6 +342,9 @@ def parse_residue_token(token: str, default_chain: str | None = None) -> str:
         raise ValueError("Empty residue entry.")
 
     if ":" in text:
+        reversed_keys = _parse_residue_chain_reversed_token(text)
+        if reversed_keys is not None and len(reversed_keys) == 1:
+            return reversed_keys[0]
         parts = [p.strip() for p in text.split(":") if p.strip()]
         if len(parts) == 2:
             chain, res_token = parts
@@ -324,7 +355,7 @@ def parse_residue_token(token: str, default_chain: str | None = None) -> str:
             resseq, icode = _parse_resseq_icode(res_token, explicit_icode=icode_token)
             return normalize_residue_key(chain, resseq, icode)
         raise ValueError(
-            f"Invalid residue entry {text!r}. Use 'A:45', 'A:45A', 'A:45:A', "
+            f"Invalid residue entry {text!r}. Use 'A:45', '45:A', 'A:45A', 'A:45:A', "
             "'A 45', or parse ranges via parse_residue_token_or_range."
         )
 
@@ -352,14 +383,18 @@ def parse_residue_token_or_range(token: str, default_chain: str | None = None) -
     """Parse one residue token, expanding integer ranges when present.
 
     Supported range formats include ``A:37-40``, ``A 37-40`` and ``37-40``
-    when ``default_chain`` is provided. Ranges use inclusive endpoints and do
-    not support insertion codes.
+    when ``default_chain`` is provided. ``37-40:A`` is also accepted for
+    residue:chain legacy files. Ranges use inclusive endpoints and do not
+    support insertion codes.
     """
     text = _normalize_residue_definition_text(token)
     if not text:
         raise ValueError("Empty residue entry.")
 
     if ":" in text:
+        reversed_keys = _parse_residue_chain_reversed_token(text)
+        if reversed_keys is not None:
+            return reversed_keys
         parts = [p.strip() for p in text.split(":") if p.strip()]
         if len(parts) == 2:
             chain, res_token = parts

@@ -1,6 +1,6 @@
 # 标准真实数据目录格式
 
-这个项目后续统一按下面的目录格式接收你的 CD38 复合物批量结果。推荐你在 `result/` 的父目录里使用本地软件或命令行，例如 `A/result/...` 时进入或导入 `A/`。
+这个项目后续统一按下面的目录格式接收你的蛋白复合物批量结果。推荐你在 `result/` 的父目录里使用本地软件或命令行，例如 `A/result/...` 时进入或导入 `A/`。如果真实数据放在 `A/rsite/result/...`，当前软件也会自动识别。
 
 ## 固定目录结构
 
@@ -50,7 +50,7 @@ A/
 
 1. 如果在你导入的目录或 zip 中发现 `pose_features.csv`，优先直接使用它，不再重建 `input_csv`。
 2. 如果没有 `pose_features.csv`，但发现 `input_pose_table.csv`，使用现有输入表。
-3. 如果两者都没有，会自动浅层查找标准 `result/` 目录，例如你选择 `A/` 时自动识别 `A/result/`。
+3. 如果两者都没有，会自动浅层查找标准 `result/` 目录，例如你选择 `A/` 时自动识别 `A/result/` 或 `A/rsite/result/`。
 4. 只有找不到标准 `result/` 时，才回退到普通 PDB 扫描并保守生成 `auto_input_pose_table.csv`。
 
 因此标准批量数据不需要你手工填写 `input_csv`。
@@ -69,15 +69,14 @@ python build_input_from_result_tree.py --result_root . --out_csv input_pose_tabl
 python build_input_from_result_tree.py --result_root result --out_csv input_pose_table.csv
 ```
 
-如果有统一 pocket / catalytic 定义：
+如果有统一 pocket / catalytic 定义，可以只传文件；所有项目默认链角色已经固定为 `antigen_chain=B`、`nanobody_chain=A`：
 
 ```powershell
 python build_input_from_result_tree.py ^
   --result_root . ^
   --out_csv input_pose_table.csv ^
   --default_pocket_file cd38_pocket.txt ^
-  --default_catalytic_file cd38_catalytic.txt ^
-  --default_antigen_chain A
+  --default_catalytic_file cd38_catalytic.txt
 ```
 
 生成后直接跑主流程：
@@ -85,6 +84,25 @@ python build_input_from_result_tree.py ^
 ```powershell
 python run_recommended_pipeline.py --input_csv input_pose_table.csv --out_dir my_outputs
 ```
+
+## 生成带 pocket evidence 的输入表
+
+如果你希望先把人工 rsite、文献、catalytic、P2Rank/fpocket、ligand-contact 和 AI prior 统一成可复核 pocket，再批量回填到输入表，推荐使用项目级入口：
+
+```powershell
+python build_project_pocket_evidence.py --project_root . --target_prefix CD38
+```
+
+这个入口会：
+
+- 自动发现当前目录下的 `result/` 或 `rsite/result/`
+- 先生成标准输入表
+- 按 `MMPBSA_energy` 最低值选择一个代表 PDB 构建项目级 pocket evidence
+- 输出 `candidate_curated_pocket.txt`
+- 输出 `input_pose_table_with_pocket_evidence.csv`
+- 保留 `pocket_residue_support.csv`、`review_residues.txt`、`evidence_source_audit.csv`、`ai_prior_audit.csv` 等审计文件
+
+边界：它不会修改 Rule/ML 权重。P2Rank/fpocket 过宽 residue 会先进入 review；AI prior 只作为待复核线索，不能直接当 ground truth。
 
 ## 生成的输入表列
 

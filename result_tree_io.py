@@ -57,6 +57,8 @@ PDB_SUFFIXES = {".pdb"}
 TARGET_VARIANT_RE = re.compile(r"^(?P<target>[A-Za-z0-9]+)_(?P<index>\d+)$")
 FLOAT_RE = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[Ee][-+]?\d+)?")
 MMPBSA_RESULT_NAME = "FINAL_RESULTS_MMPBSA.dat"
+DEFAULT_ANTIGEN_CHAIN = "B"
+DEFAULT_NANOBODY_CHAIN = "A"
 
 
 def _is_probable_pose_pdb(path: Path) -> bool:
@@ -199,12 +201,12 @@ def find_result_tree_root(root: str | Path, *, target_prefix: str = "CD38") -> t
         return None, "not_found"
 
     base = base.resolve()
-    if is_probable_result_tree(base, target_prefix=target_prefix):
-        return base, "direct"
-
     direct_result = base / "result"
     if is_probable_result_tree(direct_result, target_prefix=target_prefix):
         return direct_result.resolve(), "child_result"
+
+    if is_probable_result_tree(base, target_prefix=target_prefix):
+        return base, "direct"
 
     try:
         child_dirs = sorted([path for path in base.iterdir() if path.is_dir()], key=lambda p: p.name.lower())
@@ -216,11 +218,11 @@ def find_result_tree_root(root: str | Path, *, target_prefix: str = "CD38") -> t
             return child.resolve(), "child_result"
 
     for child in child_dirs:
-        if is_probable_result_tree(child, target_prefix=target_prefix):
-            return child.resolve(), "wrapper_direct"
         nested_result = child / "result"
         if is_probable_result_tree(nested_result, target_prefix=target_prefix):
             return nested_result.resolve(), "wrapper_child_result"
+        if is_probable_result_tree(child, target_prefix=target_prefix):
+            return child.resolve(), "wrapper_direct"
 
     return None, "not_found"
 
@@ -231,8 +233,8 @@ def build_input_table_from_result_tree(
     default_pocket_file: str | Path | None = None,
     default_catalytic_file: str | Path | None = None,
     default_ligand_file: str | Path | None = None,
-    default_antigen_chain: str | None = None,
-    default_nanobody_chain: str | None = None,
+    default_antigen_chain: str | None = DEFAULT_ANTIGEN_CHAIN,
+    default_nanobody_chain: str | None = DEFAULT_NANOBODY_CHAIN,
     path_mode: str = "absolute",
     out_csv_path: str | Path | None = None,
     allow_single_pdb_fallback: bool = False,
@@ -418,8 +420,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--default_pocket_file", default=None)
     parser.add_argument("--default_catalytic_file", default=None)
     parser.add_argument("--default_ligand_file", default=None)
-    parser.add_argument("--default_antigen_chain", default=None)
-    parser.add_argument("--default_nanobody_chain", default=None)
+    parser.add_argument("--default_antigen_chain", default=DEFAULT_ANTIGEN_CHAIN)
+    parser.add_argument("--default_nanobody_chain", default=DEFAULT_NANOBODY_CHAIN)
     parser.add_argument("--target_prefix", default="CD38", help="Target folder prefix to include, default CD38")
     parser.add_argument("--path_mode", choices=["absolute", "relative"], default="absolute")
     parser.add_argument(

@@ -25,11 +25,15 @@
 输入数据
   |
   |-- A/result/<nanobody_id>/<CD38_variant>/<pose_id>/<pose_id>.pdb
-  |     |  optional: local app auto import or build_input_from_result_tree.py
+  |     |  optional: local app auto import, build_input_from_result_tree.py,
+  |     |            build_pose_features_from_result_tree.py
   |     v
   |-- input_pose_table.csv
   |-- PDB complex files
   |-- pocket / catalytic / ligand template files
+  |-- optional pocket evidence layer:
+  |     build_pocket_evidence.py / build_project_pocket_evidence.py
+  |     -> candidate_curated_pocket.txt, review_residues.txt, audit CSVs
   |-- optional numeric scores: hdock_score, mmgbsa, interface_dg, iptm, plddt...
   v
 build_feature_table.py
@@ -89,9 +93,11 @@ python run_recommended_pipeline.py ^
   --default_pocket_file pocket.txt ^
   --default_catalytic_file catalytic.txt ^
   --default_ligand_file ligand_template.pdb ^
-  --default_antigen_chain A ^
-  --default_nanobody_chain B
+  --default_antigen_chain B ^
+  --default_nanobody_chain A
 ```
+
+在当前项目约定里，所有运行默认链角色都是 `antigen_chain=B`、`nanobody_chain=A`；命令里显式写出来只是为了可读性，省略时也是这个默认值。
 
 如果已有特征表：
 
@@ -158,6 +164,53 @@ C:189-193
 
 其中 `A:37-40` 等价于 `A:37,38,39,40`。链名不局限于 A，也可以是 B、C 等。
 
+`catalytic_file` 现在还有一个额外作用：如果文献、M-CSA、UniProt 或 PDBj 只给了酶的关键催化/功能残基，而没有直接给 pocket 位置，主程序会用这些残基作为 3D anchor，在 PDB 结构中生成 4A、6A、8A 的 catalytic-anchor shell pocket 诊断。这个逻辑不会替代 `pocket_file`，而是输出一组可复核的 `catalytic_anchor_*` 特征列。
+
+### 3.3 pocket 证据构建层
+
+如果目标是提高 pocket 定义精度，可以先运行 `build_pocket_evidence.py`，再把输出的 `candidate_curated_pocket.txt` 作为下一轮 `pocket_file`。它不训练模型，也不改变排名权重，只做 residue-level evidence fusion。
+
+支持的证据来源：
+
+| 来源 | 输入参数 | 作用 |
+|---|---|---|
+| 人工 / rsite pocket | `--manual_pocket_file` | 最高优先级的人工口袋定义 |
+| 文献功能位点 | `--literature_file` | 文献、数据库整理出的功能/口袋 residue |
+| 催化锚点 | `--catalytic_file` | 生成 catalytic core 和 4A/6A/8A 结构邻域 shell |
+| ligand/template | `--ligand_file` | 用同坐标系 ligand 附近 residue 作为结构证据 |
+| P2Rank | `--p2rank_file` | 读取 P2Rank `predictions.csv` 或 residue list |
+| fpocket | `--fpocket_file` | 读取 fpocket `pocket*_atm.pdb`、目录或 residue list |
+| AI prior | `--ai_pocket_file` | 只作为辅助 residue prior，不视为 ground truth |
+
+可选审计输入：
+
+| 审计输入 | 参数 | 作用 |
+|---|---|---|
+| literature 来源表 | `--literature_source_table` | 保留 paper、PMID、DOI、UniProt、M-CSA、来源句子、人工确认状态 |
+| catalytic 来源表 | `--catalytic_source_table` | 追溯催化/功能锚点来源，避免把宽 pocket 文件误当 catalytic core |
+| AI prior 来源表 | `--ai_source_table` / `--ai_prior_source_table` | 离线记录 AI 抽取来源句子、证据等级、模型/提示版本和人工复核状态 |
+
+主要输出：
+
+| 文件 | 含义 |
+|---|---|
+| `pocket_evidence.csv` | 每条 residue 证据明细 |
+| `pocket_residue_support.csv` | residue 聚合支持分、来源数和复核原因 |
+| `candidate_curated_pocket.txt` | 可作为下一轮 `pocket_file` 的候选口袋 |
+| `review_residues.txt` | 只有低/单一证据支持、需要人工复核的 residue |
+| `evidence_source_audit.csv` | literature/catalytic/AI 来源追溯审计 |
+| `evidence_source_template.csv` | 下一轮手工补来源字段的模板 |
+| `ai_prior_audit.csv` | AI prior 专用审计表 |
+| `ai_prior_template.csv` | AI prior 专用补填模板 |
+| `POCKET_EVIDENCE_REPORT.md` | 人可读证据报告 |
+
+当前这个层有两个安全边界：
+
+- P2Rank/fpocket 过宽时会启用 external precision guard。缺少 manual/literature/catalytic core/ligand-contact 高置信支持的边缘 residue 会标记 `external_overwide_guard`，进入 review，而不是直接进入 curated pocket。
+- AI prior 只作为待复核线索。它不参与 curated 判定的支持分/方法数，也不能和外部工具一起直接成为 ground truth。人工确认后应转写到 `manual_pocket_file` 或 `literature_file`。
+
+这个层的定位是“提高 pocket 输入质量”，不是替代 `build_feature_table.py`。正式排序仍然从 `pose_features.csv` 开始。
+
 ## 4. 特征工程层
 
 核心文件：
@@ -177,6 +230,10 @@ C:189-193
 |---|---|
 | `pocket_hit_fraction` | 纳米抗体是否接触 pocket residues |
 | `catalytic_hit_fraction` | 是否接触功能/催化 residues |
+| `catalytic_anchor_primary_shell_hit_fraction` | 是否接触催化残基 3D 邻域推断出的主 shell pocket |
+| `catalytic_anchor_min_distance_to_primary_shell` | 到 catalytic-anchor 主 shell 的最近距离 |
+| `catalytic_anchor_manual_overlap_fraction_of_shell` | catalytic-anchor shell 与人工 pocket 的重叠比例 |
+| `catalytic_anchor_shell_overwide_proxy` | catalytic-anchor shell 是否可能过宽 |
 | `min_distance_to_pocket` | 到 pocket 最近距离 |
 | `mouth_occlusion_score` | 是否遮挡口袋口部 |
 | `mouth_axis_block_fraction` | 是否沿口袋入口轴向阻断 |
@@ -193,6 +250,8 @@ C:189-193
 | `pocket_shape_tightness_proxy` | pocket 定义是否较集中 |
 
 这些都是静态结构 proxy，不是分子动力学，也不是严格自由能计算。它们的目标是把“可能阻断口袋”的几何证据量化成机器可读列。
+
+catalytic-anchor 模块的边界需要单独记住：催化残基本身不等于完整口袋，它只是高可信空间锚点。真正用于判断时，应同时看人工 `pocket_file`、文献位点、3D shell 大小、overwide 风险和与 VHH 接触的方向是否一致。
 
 ## 5. Rule baseline
 

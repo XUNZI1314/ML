@@ -28,6 +28,11 @@ PROXY_FEATURES = [
     "pocket_shape_residue_count",
     "pocket_shape_overwide_proxy",
     "pocket_shape_tightness_proxy",
+    "catalytic_anchor_primary_shell_residue_count",
+    "catalytic_anchor_primary_shell_hit_fraction",
+    "catalytic_anchor_min_distance_to_primary_shell",
+    "catalytic_anchor_manual_overlap_fraction_of_shell",
+    "catalytic_anchor_shell_overwide_proxy",
 ]
 
 ROW_FIELDS = [
@@ -52,6 +57,8 @@ CANDIDATE_FIELDS = [
     "mean_ligand_path_block_score",
     "mean_ligand_path_exit_block_fraction",
     "mean_pocket_shape_overwide_proxy",
+    "mean_catalytic_anchor_primary_shell_hit_fraction",
+    "mean_catalytic_anchor_shell_overwide_proxy",
     "recommended_action",
 ]
 
@@ -140,6 +147,9 @@ def _flag_row(row: pd.Series, args: argparse.Namespace) -> list[str]:
     path_clearance = _num(row, "ligand_path_min_clearance")
     substrate_overlap = _num(row, "substrate_overlap_score")
     overwide = _num(row, "pocket_shape_overwide_proxy")
+    anchor_hit = _num(row, "catalytic_anchor_primary_shell_hit_fraction")
+    anchor_overlap = _num(row, "catalytic_anchor_manual_overlap_fraction_of_shell")
+    anchor_overwide = _num(row, "catalytic_anchor_shell_overwide_proxy")
 
     flags: list[str] = []
     mouth_high = any(_is_high(value, high) for value in [mouth_occ, mouth_axis, mouth_aperture])
@@ -153,6 +163,15 @@ def _flag_row(row: pd.Series, args: argparse.Namespace) -> list[str]:
 
     if _is_high(overwide, float(args.overwide_threshold)):
         flags.append("pocket_shape_overwide")
+
+    if _is_high(anchor_overwide, float(args.overwide_threshold)):
+        flags.append("catalytic_anchor_shell_overwide")
+
+    if _is_high(anchor_hit, high) and _is_low(catalytic_hit, low):
+        flags.append("anchor_shell_high_but_core_catalytic_low")
+
+    if _is_low(anchor_overlap, 0.20):
+        flags.append("manual_pocket_low_overlap_with_catalytic_anchor")
 
     if mouth_high and path_open:
         flags.append("mouth_high_but_ligand_path_open")
@@ -241,6 +260,12 @@ def _recommended_action(flags: list[str]) -> str:
         return "No proxy consistency issue detected."
     if "pocket_shape_overwide" in flag_set:
         return "Review pocket boundary or method consensus before trusting blocking score."
+    if "catalytic_anchor_shell_overwide" in flag_set:
+        return "Review catalytic-anchor shell radius or catalytic residue list before treating it as a pocket proxy."
+    if "manual_pocket_low_overlap_with_catalytic_anchor" in flag_set:
+        return "Compare manual pocket and catalytic-anchor shell; residue numbering or pocket definition may need review."
+    if "anchor_shell_high_but_core_catalytic_low" in flag_set:
+        return "Treat catalytic-anchor shell contact as broad-neighborhood evidence, not direct catalytic-site blocking."
     if any(flag.endswith("_clearance_open") or flag == "mouth_high_but_ligand_path_open" for flag in flag_set):
         return "Inspect mouth/path geometry; score may be driven by a partial blocker while an escape path remains open."
     if "path_high_but_pocket_contact_low" in flag_set or "path_high_but_catalytic_contact_low" in flag_set:
@@ -320,6 +345,8 @@ def _candidate_audit(df: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame
             "ligand_path_block_score",
             "ligand_path_exit_block_fraction",
             "pocket_shape_overwide_proxy",
+            "catalytic_anchor_primary_shell_hit_fraction",
+            "catalytic_anchor_shell_overwide_proxy",
         ]:
             out_col = f"mean_{col}"
             if col in group.columns:
@@ -375,6 +402,10 @@ def _summary(
     next_actions: list[str] = []
     if "pocket_shape_overwide" in flag_counts:
         next_actions.append("Review high pocket_shape_overwide_proxy rows; consider method consensus or tighter pocket definition.")
+    if "catalytic_anchor_shell_overwide" in flag_counts:
+        next_actions.append("Review catalytic-anchor shell rows; large 3D shells should be used as diagnostic neighborhoods, not direct pocket truth.")
+    if "manual_pocket_low_overlap_with_catalytic_anchor" in flag_counts:
+        next_actions.append("Compare manual pocket residues against catalytic-anchor shell; check residue numbering and whether catalytic anchors should expand the curated pocket.")
     if any(flag in flag_counts for flag in ["mouth_high_but_ligand_path_open", "path_block_high_but_clearance_open"]):
         next_actions.append("Inspect mouth/path rows where blocking is high but a clearance/open-path proxy remains permissive.")
     if any(flag in flag_counts for flag in ["path_high_but_pocket_contact_low", "path_high_but_catalytic_contact_low"]):

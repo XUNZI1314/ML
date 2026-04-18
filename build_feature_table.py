@@ -24,6 +24,7 @@ from pdb_parser import (
     split_antigen_nanobody,
 )
 from pocket_io import load_ligand_template_pdb, load_residue_set, match_residues_in_structure
+from sidecar_features import parse_pose_sidecar_features
 
 
 REQUIRED_INPUT_COLUMNS = [
@@ -32,6 +33,9 @@ REQUIRED_INPUT_COLUMNS = [
     "pose_id",
     "pdb_path",
 ]
+
+DEFAULT_ANTIGEN_CHAIN = "B"
+DEFAULT_NANOBODY_CHAIN = "A"
 
 OPTIONAL_HINT_NUMERIC_COLUMNS = [
     "hdock_score",
@@ -48,6 +52,20 @@ OPTIONAL_HINT_NUMERIC_COLUMNS = [
     "pae",
     "plddt",
     "rsite_accuracy",
+    "mmpbsa_normalized",
+    "score_txt",
+    "interface_dG_cross",
+    "interface_dG_cross/dSASAx100",
+    "interface_dG_separated",
+    "interface_dG_separated/dSASAx100",
+    "interface_dSASA_polar",
+    "interface_dSASA_int",
+    "interface_hbonds_int",
+    "interface_packstat",
+    "decomp_antigen_total_sum",
+    "decomp_nanobody_total_sum",
+    "decomp_pocket_total_sum",
+    "decomp_pocket_total_mean",
     "label",
 ]
 
@@ -237,8 +255,8 @@ def process_one_pose(
     default_pocket_file: str | None = None,
     default_catalytic_file: str | None = None,
     default_ligand_file: str | None = None,
-    default_antigen_chain: str | None = None,
-    default_nanobody_chain: str | None = None,
+    default_antigen_chain: str | None = DEFAULT_ANTIGEN_CHAIN,
+    default_nanobody_chain: str | None = DEFAULT_NANOBODY_CHAIN,
     pdb_structure_cache: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Process one pose row and return output record with status/error fields.
@@ -371,6 +389,16 @@ def process_one_pose(
         )
 
         output.update(geom_features)
+        pose_dir_text = _clean_str(row.get("pose_dir"))
+        pose_dir = _resolve_path(pose_dir_text, base) if pose_dir_text else str(Path(pdb_path).parent)
+        output.update(
+            parse_pose_sidecar_features(
+                pose_dir,
+                pose_id=output["pose_id"],
+                pocket_residue_keys=pocket_keys,
+                antigen_chain=antigen_chain,
+            )
+        )
         output["status"] = "ok"
         output["error_message"] = ""
         output["warning_message"] = " | ".join(warnings[:5])
@@ -402,8 +430,8 @@ def safe_process_one_pose(
     default_pocket_file: str | None = None,
     default_catalytic_file: str | None = None,
     default_ligand_file: str | None = None,
-    default_antigen_chain: str | None = None,
-    default_nanobody_chain: str | None = None,
+    default_antigen_chain: str | None = DEFAULT_ANTIGEN_CHAIN,
+    default_nanobody_chain: str | None = DEFAULT_NANOBODY_CHAIN,
     pdb_structure_cache: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Safe wrapper around process_one_pose that guarantees status fields."""
@@ -591,8 +619,8 @@ def build_feature_table(
     default_pocket_file: str | None = None,
     default_catalytic_file: str | None = None,
     default_ligand_file: str | None = None,
-    default_antigen_chain: str | None = None,
-    default_nanobody_chain: str | None = None,
+    default_antigen_chain: str | None = DEFAULT_ANTIGEN_CHAIN,
+    default_nanobody_chain: str | None = DEFAULT_NANOBODY_CHAIN,
     skip_failed_rows: bool = False,
     pdb_structure_cache: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
@@ -751,12 +779,12 @@ def _build_cli_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--default_antigen_chain",
-        default=None,
+        default=DEFAULT_ANTIGEN_CHAIN,
         help="Default antigen chain ID used when a row has empty antigen_chain.",
     )
     parser.add_argument(
         "--default_nanobody_chain",
-        default=None,
+        default=DEFAULT_NANOBODY_CHAIN,
         help="Default nanobody chain ID used when a row has empty nanobody_chain.",
     )
     parser.add_argument(

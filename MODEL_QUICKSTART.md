@@ -97,9 +97,28 @@ A/
 | `1/1.pdb` | `pdb_path` |
 | `1/FINAL_RESULTS_MMPBSA.dat` | `MMPBSA_energy` |
 
-本地软件左侧“导入目录/zip”选择 `A/` 即可。导入逻辑是：先找 `pose_features.csv`；没有时找 `input_pose_table.csv`；两者都没有时自动识别 `A/result/` 并生成 `auto_input_pose_table.csv`。因此标准目录下不需要手动填写 `input_csv`。
+本地软件左侧“导入目录/zip”选择 `A/` 即可。导入逻辑是：先找 `pose_features.csv`；没有时找 `input_pose_table.csv`；两者都没有时自动识别 `A/result/` 或 `A/rsite/result/` 并生成 `auto_input_pose_table.csv`。因此标准目录下不需要手动填写 `input_csv`。
 
-如果用命令行，在 `A/` 目录执行：
+如果只想一键从标准结果目录提取正式特征表，在 `A/` 目录执行：
+
+```bash
+python build_pose_features_from_result_tree.py
+```
+
+这会在当前目录生成：
+
+```text
+pose_features.csv
+input_pose_table.csv
+feature_qc.json
+input_pose_table.report.md
+```
+
+如果存在 `rsite/rsite.txt`，会自动按默认 `antigen_chain=B` 过滤口袋残基，并把派生 pocket 写到 `.ml_auto/auto_pocket_antigen_B.txt`。同时会把 `FINAL_RESULTS_MMPBSA.dat`、`MMPBSA_normalized.txt`、`score.txt`、`*_accuracy.txt`、`*_interface.sc`、`FINAL_DECOMP_MMPBSA.dat` 解析进 `pose_features.csv`。
+
+如果提供 `catalytic_file`，主程序现在会额外启用 catalytic-anchor pocket 诊断：以催化/功能残基为 3D anchor，在 PDB 结构里自动生成 4A、6A、8A 邻域 shell，并输出 `catalytic_anchor_*` 特征列。这个模块用于解释和复核口袋定义，不会替代人工 `pocket_file`。
+
+如果只想先生成输入表，在 `A/` 目录执行：
 
 ```bash
 python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv
@@ -108,8 +127,10 @@ python build_input_from_result_tree.py --result_root . --out_csv input_pose_tabl
 如果有统一 CD38 pocket / catalytic 文件，可以一起写入：
 
 ```bash
-python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv --default_pocket_file cd38_pocket.txt --default_catalytic_file cd38_catalytic.txt --default_antigen_chain A
+python build_input_from_result_tree.py --result_root . --out_csv input_pose_table.csv --default_pocket_file cd38_pocket.txt --default_catalytic_file cd38_catalytic.txt
 ```
+
+默认链角色已经在所有项目中固定为 `antigen_chain=B`、`nanobody_chain=A`。在当前 `A/` 数据里，这对应 CD38 在 B 链、VHH 在 A 链。只有遇到特殊数据时才需要手动覆盖。
 
 然后再跑主流程：
 
@@ -223,6 +244,74 @@ python input_path_repair.py --input_csv input_pose_table.csv --search_root . --o
 | `B:37-40` | 链 B 的 37、38、39、40 号残基 |
 | `C:37-40` | 链 C 的 37、38、39、40 号残基 |
 | `B:102A` | 链 B 的 102A 插入码残基 |
+
+`catalytic_file` 的格式和 `pocket_file` 完全相同。区别是：`pocket_file` 表示你已经确认的口袋残基；`catalytic_file` 表示文献、数据库或人工确认的催化/功能锚点。主程序会同时计算直接催化残基接触和 catalytic-anchor shell 口袋诊断。
+
+当没有直接 pocket 文献时，推荐做法是：
+
+1. 把文献/M-CSA/UniProt/PDBj 查到的关键催化残基写入 `catalytic_file`。
+2. 继续保留人工或已有工具给出的 `pocket_file`。
+3. 运行主流程后查看 `catalytic_anchor_primary_shell_*` 和 `catalytic_anchor_manual_overlap_*` 列，判断催化锚点推断出的 3D 口袋是否和人工 pocket 一致。
+
+### 0.3.1 高精度 pocket 证据整合（可选）
+
+如果你愿意花时间追求 pocket 精度，不要只依赖单一工具。当前主程序新增了一个证据整合入口：
+
+```bash
+python build_pocket_evidence.py ^
+  --pdb_path A\rsite\result\vhh1\CD38_1\1\1.pdb ^
+  --manual_pocket_file A\cd38_pocket_from_rsite_chain_B.txt ^
+  --catalytic_file A\cd38_pocket_from_rsite_chain_B.txt ^
+  --catalytic_source_table catalytic_source_audit.csv ^
+  --ai_source_table ai_prior_source_audit.csv ^
+  --antigen_chain B ^
+  --out_dir pocket_evidence_outputs
+```
+
+它会把人工/rsite、文献功能残基、catalytic-anchor 3D shell、ligand-contact、P2Rank、fpocket 和 AI residue prior 统一成证据表。输出包括：
+
+- `pocket_evidence.csv`
+- `pocket_residue_support.csv`
+- `candidate_curated_pocket.txt`
+- `review_residues.txt`
+- `evidence_source_audit.csv`
+- `evidence_source_template.csv`
+- `ai_prior_audit.csv`
+- `ai_prior_template.csv`
+- `pocket_evidence_summary.json`
+- `POCKET_EVIDENCE_REPORT.md`
+
+默认还会启用 P2Rank/fpocket precision guard：如果外部工具给出的 pocket 明显过宽，且某些 residue 没有 manual、文献、catalytic core 或 ligand-contact 这类高置信支持，它们会被标记为 `external_overwide_guard`，进入 `review_residues.txt`，不会直接进入 `candidate_curated_pocket.txt`。需要调阈值时使用 `--external_overwide_max_residue_count` 和 `--external_overwide_max_fraction`。
+
+AI prior 只能作为待复核线索。`--ai_pocket_file` 中的 residue 不参与 curated 判定的支持分/方法数，也不能和外部工具一起直接变成 ground truth。如果使用 AI 从文献中抽取 residue，请同时提供 `--ai_source_table`，至少保留 `source_sentence`、`evidence_level` 和 `review_status`；人工确认后再转写到 `manual_pocket_file` 或 `literature_file`。
+
+边界：这个脚本只生成 pocket 证据和候选 pocket 文件，不改变正式 Rule / ML 权重。确认 `candidate_curated_pocket.txt` 合理后，可以把它作为下一轮 `pocket_file` 使用。
+
+如果 literature/catalytic residue 来自论文、UniProt 或 M-CSA，建议补一个来源审计表再运行：
+
+```csv
+residue_key,evidence_role,source_kind,paper_title,pmid,doi,uniprot_id,uniprot_feature,mcsa_id,pdb_id,source_sentence,evidence_level,curator,review_status,manual_note
+B:82,catalytic,paper,Example title,12345678,10.xxxx/example,P28907,active site,,1ABC,Source sentence,strong,your_name,confirmed,manual note
+```
+
+可以用 `--literature_source_table` / `--catalytic_source_table` 传入该表。输出的 `evidence_source_audit.csv` 会标出缺少来源、缺少可追溯字段或还没有人工确认的 residue；`evidence_source_template.csv` 可以直接作为下一轮补填模板。`residue_key` 支持 `B:83-84` 这类范围写法。
+
+AI source audit 表建议写成：
+
+```csv
+residue_key,evidence_role,source_kind,paper_title,pmid,doi,source_sentence,evidence_level,ai_model,ai_prompt_id,ai_extraction_confidence,curator,review_status,manual_note
+B:82,ai_prior,ai_extraction,Example title,12345678,10.xxxx/example,Sentence copied from source,medium,gpt-x,prompt_v1,0.72,your_name,unreviewed,needs manual check
+```
+
+本地软件也有同一入口：打开“诊断”页里的“Pocket 证据整合”，填写代表 PDB 和各类 pocket 证据文件后点击“构建 pocket 证据”。生成后可以按 curated、needs review、single-method、anchor-shell-only、AI-prior-only 和 not-found-in-structure 分组预览 support 表，并点击“设为下一轮 default_pocket_file”。
+
+如果你已经有标准 `result/` 父目录，不想手动选代表 PDB，可以运行项目级批量入口：
+
+```bash
+python build_project_pocket_evidence.py --project_root A --target_prefix CD38
+```
+
+它会自动发现 `A/result/` 或 `A/rsite/result/`，按 `MMPBSA_energy` 最低值选择一个代表 PDB，生成项目级 pocket evidence，并在项目目录写出 `input_pose_table_with_pocket_evidence.csv`。本地软件“Pocket 证据整合”面板里也有“从 result 父目录批量构建 pocket evidence”按钮，完成后会把生成的 input CSV 回填为下一轮输入。
 
 ## 0.4 CD38 公开结构 benchmark 最短入口（可选）
 
@@ -509,8 +598,8 @@ NB_002,CF_01,P_001,data/NB_002_CF_01_P_001.pdb
 
 ```csv
 nanobody_id,conformer_id,pose_id,pdb_path,antigen_chain,nanobody_chain,pocket_file,catalytic_file,ligand_file,label
-NB_001,CF_01,P_001,data/NB_001_CF_01_P_001.pdb,A,H,data/pocket.txt,data/catalytic.txt,data/ligand.pdb,1
-NB_001,CF_01,P_002,data/NB_001_CF_01_P_002.pdb,A,H,data/pocket.txt,data/catalytic.txt,data/ligand.pdb,0
+NB_001,CF_01,P_001,data/NB_001_CF_01_P_001.pdb,B,A,data/pocket.txt,data/catalytic.txt,data/ligand.pdb,1
+NB_001,CF_01,P_002,data/NB_001_CF_01_P_002.pdb,B,A,data/pocket.txt,data/catalytic.txt,data/ligand.pdb,0
 ```
 
 说明：
@@ -547,6 +636,10 @@ python run_recommended_pipeline.py --feature_csv pose_features.csv --out_dir my_
 
 - `pocket_hit_fraction`
 - `catalytic_hit_fraction`
+- `catalytic_anchor_primary_shell_hit_fraction`
+- `catalytic_anchor_min_distance_to_primary_shell`
+- `catalytic_anchor_manual_overlap_fraction_of_shell`
+- `catalytic_anchor_shell_overwide_proxy`
 - `mouth_occlusion_score`
 - `mouth_axis_block_fraction`
 - `mouth_aperture_block_fraction`

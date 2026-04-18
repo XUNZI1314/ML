@@ -23,4 +23,7 @@ validation_tmp*/
 result/
 result_tree_inputs/
 
+# Local real-data workspace. Never upload A/ to GitHub.
+A/
+
 *.log
